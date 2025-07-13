@@ -84,13 +84,19 @@ export const getAllDoctors = asyncHandler(async (req, res) => {
         const doctors = await Doctor.find().select("-password -refreshToken");
         
         if (!doctors || doctors.length === 0) {
-            throw new ApiError(404, "No doctors found");
+            return res.status(404).json(
+                new ApiResponse(404, [], "No doctors found")
+            );
         }
-        console.log(doctors);
 
-        res.status(200).json(new ApiResponse(200, doctors, "Doctors retrieved successfully"));
+        return res.status(200).json(
+            new ApiResponse(200, doctors, "Doctors retrieved successfully")
+        );
     } catch (error) {
-        throw new ApiError(500, "Error fetching doctors: " + error.message);
+        console.error("Error in getAllDoctors:", error);
+        return res.status(500).json(
+            new ApiResponse(500, null, "Error fetching doctors: " + error.message)
+        );
     }
 });
 
