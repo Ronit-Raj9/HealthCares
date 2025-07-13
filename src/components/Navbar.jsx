@@ -4,6 +4,7 @@ import "../styles/navbar.css";
 import { FiMenu } from "react-icons/fi";
 import { RxCross1 } from "react-icons/rx";
 import { useState, useEffect } from "react";
+import { ConnectButton } from '@rainbow-me/rainbowkit';
 
 const Navbar = () => {
   const navigate = useNavigate();
@@ -71,6 +72,10 @@ const Navbar = () => {
               <li><NavLink className="btn" to={"/registerD"}>Doctor Register</NavLink></li>
             </>
           )}
+
+          <li style={{ display: 'flex', alignItems: 'center' }}>
+            <ConnectButton />
+          </li>
 
           {tokenType && (
             <li>
