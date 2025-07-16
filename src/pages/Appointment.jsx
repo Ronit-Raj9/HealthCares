@@ -7,10 +7,10 @@ import { useDispatch, useSelector } from "react-redux";
 import { setLoading } from "../redux/reducers/rootSlice";
 import toast from "react-hot-toast";
 import "../styles/appoint.css";
-import Error from "../pages/Error";
 
 const Appointment = () => {
   const [appointments, setAppointments] = useState([]);
+  const [error, setError] = useState(null);
   const dispatch = useDispatch();
   const { loading } = useSelector((state) => state.root);
   const patient = JSON.parse(localStorage.getItem("patient"));
@@ -18,21 +18,28 @@ const Appointment = () => {
 
   const retriveAllApoint = async () => {
     try {
-      dispatch(setLoading(true));
-      const patientData = JSON.parse(localStorage.getItem("patient"));
-      const patientId = patientData?._id;
-      if (!patientId) {
-        throw new Error("Patient ID not found");
+      if (!patient || !userId) {
+        setError("Please login to view appointments");
+        return;
       }
 
+      dispatch(setLoading(true));
+      setError(null);
+
       const response = await fetchData(
-        `http://localhost:5000/api/patients/${patientId}/appointments`
+        `http://localhost:5000/api/patients/${userId}/appointments`
       );
-      setAppointments(response.data);
-      dispatch(setLoading(false));
+
+      if (response && response.data) {
+        setAppointments(response.data);
+      } else {
+        setError("No appointments data received");
+      }
     } catch (error) {
       console.error("Error fetching appointments:", error);
+      setError(error.message || "Failed to fetch appointments");
       toast.error("Failed to fetch appointments");
+    } finally {
       dispatch(setLoading(false));
     }
   };
@@ -44,78 +51,81 @@ const Appointment = () => {
   return (
     <>
       <Navbar />
+      <div className="page-wrapper">
+        <section className="notif-section">
+          <h2 className="page-heading">Your Appointments</h2>
 
-      {loading ? (
-        <Loading />
-      ) : (
-        <div className="page-wrapper">
-          <section className="notif-section">
-            <h2 className="page-heading">Your Appointments</h2>
-
-            {appointments.length > 0 ? (
-              <div className="appointments-wrapper">
-                <div className="responsive-table-wrapper">
-                  <table className="appointments">
-                    <thead>
-                      <tr>
-                        <th>S.No</th>
-                        <th>Doctor</th>
-                        <th>Patient</th>
-                        <th>Appointment Date</th>
-                        <th>Appointment Time</th>
-                        <th>Booking Date</th>
-                        <th>Booking Time</th>
-                        <th>Status</th>
-                        {userId === appointments[0]?.doctorId?._id && <th>Action</th>}
+          {loading ? (
+            <Loading />
+          ) : error ? (
+            <div className="error-message" style={{ textAlign: 'center', padding: '2rem' }}>
+              {error}
+            </div>
+          ) : appointments.length === 0 ? (
+            <div className="no-appointments" style={{ textAlign: 'center', padding: '2rem' }}>
+              <p>You don't have any appointments yet.</p>
+            </div>
+          ) : (
+            <div className="appointments-wrapper">
+              <div className="responsive-table-wrapper">
+                <table className="appointments">
+                  <thead>
+                    <tr>
+                      <th>S.No</th>
+                      <th>Doctor</th>
+                      <th>Patient</th>
+                      <th>Appointment Date</th>
+                      <th>Appointment Time</th>
+                      <th>Booking Date</th>
+                      <th>Booking Time</th>
+                      <th>Status</th>
+                      {userId === appointments[0]?.doctorId?._id && <th>Action</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {appointments.map((ele, i) => (
+                      <tr key={ele?._id}>
+                        <td>{i + 1}</td>
+                        <td>{ele?.doctorId?.name}</td>
+                        <td>{ele?.patientId?.name}</td>
+                        <td>{ele?.date}</td>
+                        <td>{ele?.time}</td>
+                        <td>
+                          {new Date(ele?.createdAt).toLocaleDateString("en-IN", {
+                            timeZone: "Asia/Kolkata",
+                          })}
+                        </td>
+                        <td>
+                          {new Date(ele?.createdAt).toLocaleTimeString("en-IN", {
+                            timeZone: "Asia/Kolkata",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                            hour12: true,
+                          })}
+                        </td>
+                        <td>{ele?.status}</td>
+                        {userId === ele?.doctorId?._id && (
+                          <td>
+                            <button
+                              className={`btn user-btn accept-btn ${
+                                ele?.status === "Completed" ? "disable-btn" : ""
+                              }`}
+                              disabled={ele?.status === "Completed"}
+                            >
+                              Complete
+                            </button>
+                          </td>
+                        )}
                       </tr>
-                    </thead>
-                    <tbody>
-                      {appointments.map((ele, i) => (
-                        <tr key={ele?._id}>
-                          <td>{i + 1}</td>
-                          <td>{ele?.doctorId?.name}</td>
-                          <td>{ele?.patientId?.name}</td>
-                          <td>{ele?.date}</td>
-                          <td>{ele?.time}</td>
-                          <td>
-                            {new Date(ele?.createdAt).toLocaleDateString("en-IN", {
-                              timeZone: "Asia/Kolkata",
-                            })}
-                          </td>
-                          <td>
-                            {new Date(ele?.createdAt).toLocaleTimeString("en-IN", {
-                              timeZone: "Asia/Kolkata",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                              hour12: true,
-                            })}
-                          </td>
-                          <td>{ele?.status}</td>
-                          {userId === ele?.doctorId?._id && (
-                            <td>
-                              <button
-                                className={`btn user-btn accept-btn ${
-                                  ele?.status === "Completed" ? "disable-btn" : ""
-                                }`}
-                                disabled={ele?.status === "Completed"}
-                              >
-                                Complete
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ) : (
-              <Error />
-            )}
-          </section>
-        </div>
-      )}
+            </div>
+          )}
+        </section>
+      </div>
       <Footer />
     </>
   );

@@ -46,43 +46,46 @@ const getPatientProfile = asyncHandler(async (req, res) => {
 
 const getPatientAppointments = asyncHandler(async (req, res) => {
   const { patientId } = req.params;
-  console.log("Fetching appointments for patient ID:", patientId);
-
+  
   try {
+    // Verify that the authenticated user is requesting their own appointments
+    if (req.user._id.toString() !== patientId) {
+      return res.status(403).json(
+        new ApiError(403, "You are not authorized to view these appointments")
+      );
+    }
+
     const patient = await Patient.findById(patientId);
-    console.log("Patient found:", patient);
 
     if (!patient) {
-      return res.status(404).json(new ApiError(404, "Patient not found"));
+      return res.status(404).json(
+        new ApiError(404, "Patient not found")
+      );
     }
 
-    // const appointmentIds = patient.appointments || [];
-
-    // if (appointmentIds.length === 0) {
-    //   return res
-    //     .status(200)
-    //     .json(new ApiResponse(200, [], "No appointments found"));
-    // }
-     const appointmentsDetails = await Appointment.find({ patientId }) // 🔥 Querying directly
+    const appointmentsDetails = await Appointment.find({ patientId })
       .populate("doctorId", "name email")
-      .populate("patientId", "name email"); 
+      .populate("patientId", "name email")
+      .sort({ createdAt: -1 }); // Sort by newest first
 
-    // const appointmentsDetails = await Appointment.find({ _id: { $in: appointmentIds } })
-    //   .populate("doctorId", "firstname lastname email")
-    //   .populate("userId", "firstname lastname email");
-    
-    if (appointmentsDetails.length === 0) {
-      return res.status(200).json(new ApiResponse(200, [], "No appointments found"));
-    }
+    return res.status(200).json(
+      new ApiResponse(
+        200, 
+        appointmentsDetails, 
+        appointmentsDetails.length > 0 
+          ? "Appointments retrieved successfully" 
+          : "No appointments found"
+      )
+    );
 
-    return res
-      .status(200)
-      .json(new ApiResponse(200, appointmentsDetails, "Appointments retrieved successfully"));
   } catch (error) {
-    console.error("Appointment fetch error:", error.message);
-    return res
-      .status(500)
-      .json(new ApiError(500, "Error retrieving appointments: " + error.message));
+    console.error("Appointment fetch error:", error);
+    return res.status(500).json(
+      new ApiError(
+        500, 
+        "Error retrieving appointments: " + (error.message || "Unknown error")
+      )
+    );
   }
 });
 

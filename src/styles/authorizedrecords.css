@@ -1,0 +1,139 @@
+.authorized-records-container {
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.authorized-records-container h2 {
+    color: #2c3e50;
+    margin-bottom: 2rem;
+    text-align: center;
+}
+
+.loading {
+    text-align: center;
+    padding: 2rem;
+    color: #666;
+    font-size: 1.1rem;
+}
+
+.records-section {
+    background: #fff;
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.no-records {
+    text-align: center;
+    padding: 2rem;
+    color: #666;
+}
+
+.records-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.record-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s;
+}
+
+.record-card:hover {
+    transform: translateY(-2px);
+}
+
+.record-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+}
+
+.record-header h4 {
+    color: #2c3e50;
+    margin: 0;
+    flex: 1;
+}
+
+.record-type {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.record-type.prescription {
+    background: #e8f4fd;
+    color: #3498db;
+}
+
+.record-type.report {
+    background: #eafaf1;
+    color: #27ae60;
+}
+
+.record-type.bill {
+    background: #fef9e7;
+    color: #f1c40f;
+}
+
+.description {
+    color: #666;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.record-details {
+    margin: 1rem 0;
+    padding: 1rem 0;
+    border-top: 1px solid #eee;
+    border-bottom: 1px solid #eee;
+}
+
+.record-details p {
+    margin-bottom: 0.5rem;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.access-expiry {
+    color: #e74c3c !important;
+}
+
+.record-actions {
+    margin-top: 1rem;
+}
+
+.view-button {
+    width: 100%;
+    background-color: #3498db;
+    color: white;
+    padding: 0.75rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background-color 0.3s;
+}
+
+.view-button:hover {
+    background-color: #2980b9;
+}
+
+@media (max-width: 768px) {
+    .authorized-records-container {
+        padding: 1rem;
+    }
+    
+    .records-grid {
+        grid-template-columns: 1fr;
+    }
+} 

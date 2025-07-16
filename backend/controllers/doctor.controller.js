@@ -305,55 +305,65 @@ export const getAppointments = asyncHandler(async (req, res) => {
   }
 });
 export const updateAppointmentStatus = asyncHandler(async (req, res) => {
+    const {doctorId, appointmentId} = req.params;
+    const {status} = req.body;
     
-    try {
-        const {doctorId, appointmentId} = req.params;
-        const {status,appointmentTime} = req.body;
-        console.log("Updating appointment status for Doctor ID:", doctorId, "Appointment ID:", appointmentId);
-        if (!doctorId || !appointmentId || !status) {
-            throw new ApiError(400, "Doctor ID, Appointment ID and status are required");
-        }
-        if (!mongoose.Types.ObjectId.isValid(doctorId) || !mongoose.Types.ObjectId.isValid(appointmentId)) {
-            throw new ApiError(400, "Invalid doctor or appointment ID");
-        }
+    console.log("Updating appointment status:", { doctorId, appointmentId, status });
 
-        const doctor = await Doctor.findById(doctorId);
-        if (!doctor) {
-            throw new ApiError(404, "Doctor not found");
-        }
-        if(status !== 'pending' &&!appointmentTime) {
-            throw new ApiError(400, "Appointment time is required for confirmed or cancelled status");
-        }
-        const appointment = await Appointment.findById(appointmentId);
-        if (!appointment) {
-            throw new ApiError(404, "Appointment not found");
-        }
-
-        appointment.status = status;
-        if(appointmentTime) {
-            appointment.appointmentTime = appointmentTime;
-        }
-        const patient = await Patient.findById(appointment.patientId);
-        if (!patient) {
-            throw new ApiError(404, "Patient not found");
-        }
-        const notification = await Notification.create({
-            userId: patient._id,
-            message:"Your appointment status has been updated to " + status,
-            type: 'appointment',
-        });
-        notification.save();
-        patient.notifications.push({_id:notification._id, message: notification.message});
-        await patient.save();
-        await appointment.save();
-
-        
-
-        res.status(200).json(new ApiResponse(200, appointment,"Appointment status updated successfully"));
-    } catch (error) {
-        
-        throw new ApiError(500, "Error updating appointment status: " + error.message);
+    if (!doctorId || !appointmentId || !status) {
+        throw new ApiError(400, "Doctor ID, Appointment ID and status are required");
     }
+
+    if (!mongoose.Types.ObjectId.isValid(doctorId) || !mongoose.Types.ObjectId.isValid(appointmentId)) {
+        throw new ApiError(400, "Invalid doctor or appointment ID");
+    }
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+        throw new ApiError(404, "Doctor not found");
+    }
+
+    const appointment = await Appointment.findById(appointmentId);
+    if (!appointment) {
+        throw new ApiError(404, "Appointment not found");
+    }
+
+    // Convert status to lowercase to match the model's enum values
+    const normalizedStatus = status.toLowerCase();
+    if (!['pending', 'confirmed', 'cancelled'].includes(normalizedStatus)) {
+        throw new ApiError(400, "Invalid status value. Must be one of: pending, confirmed, cancelled");
+    }
+
+    appointment.status = normalizedStatus;
+    
+    const patient = await Patient.findById(appointment.patientId);
+    if (!patient) {
+        throw new ApiError(404, "Patient not found");
+    }
+
+    // Create notification
+    const notification = await Notification.create({
+        userId: patient._id,
+        message: `Your appointment has been ${normalizedStatus}`,
+        type: 'appointment',
+    });
+
+    // Update patient notifications
+    patient.notifications.push({
+        _id: notification._id,
+        message: notification.message
+    });
+
+    // Save all changes
+    await Promise.all([
+        notification.save(),
+        patient.save(),
+        appointment.save()
+    ]);
+
+    return res.status(200).json(
+        new ApiResponse(200, appointment, "Appointment status updated successfully")
+    );
 });
 export const getAllNotificationsForPatient = async (req, res) => {
   try {

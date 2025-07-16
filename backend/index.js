@@ -11,6 +11,8 @@ import dotenv from 'dotenv';
 import imageUploadRoutes from './routes/upload.js';
 import forgotPassRouter from "./routes/forget-pass.js";
 import notificationRouter from "./routes/notifRouters.js";
+import medicalRecordRouter from "./routes/medicalRecord.routes.js";
+
 dotenv.config({path: './.env'});
 const app= express();
 app.use(cors({
@@ -40,6 +42,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/upload', imageUploadRoutes);
 app.use('/api/auth', forgotPassRouter);
 app.use('/api/notifications', notificationRouter);
+app.use('/api/medical-records', medicalRecordRouter);
 
 // Start the server
 app.listen(5000, () => {

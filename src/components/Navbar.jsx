@@ -59,6 +59,24 @@ const Navbar = () => {
                   Notifications
                 </NavLink>
               </li>
+              
+              {/* Medical Records Navigation */}
+              {tokenType === "patient" && (
+                <>
+                  <li>
+                    <NavLink to="/medical-records">Medical Records</NavLink>
+                  </li>
+                  <li>
+                    <NavLink to="/access-requests">Access Management</NavLink>
+                  </li>
+                </>
+              )}
+              {tokenType === "doctor" && (
+                <li>
+                  <NavLink to="/authorized-records">Patient Records</NavLink>
+                </li>
+              )}
+              
               <li><HashLink to={"/#contact"}>Contact Us</HashLink></li>
               <li><NavLink to={"/profile"}>Profile</NavLink></li>
             </>

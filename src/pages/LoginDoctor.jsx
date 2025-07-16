@@ -130,7 +130,7 @@ function LoginDoctor(){
             className="btn form-btn"
             disabled={loading ? true : false}
           >
-            sign up
+            sign In
           </button>
         </form>
         <p>
