@@ -76,6 +76,22 @@ const doctorSchema = new Schema({
     appointments: {
         type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Appointment' }],
         default: [],
+    },
+    // Encryption keys for secure patient data access
+    publicKey: {
+        type: String, // RSA public key in PEM format
+        required: false // Will be generated on first login/key generation
+    },
+    privateKey: {
+        type: String, // RSA private key in PEM format (encrypted with doctor's password)
+        required: false
+    },
+    keyGeneratedAt: {
+        type: Date
+    },
+    isKeyPairGenerated: {
+        type: Boolean,
+        default: false
     }
 });
 // Hash the password before saving

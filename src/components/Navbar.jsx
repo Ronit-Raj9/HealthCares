@@ -69,6 +69,9 @@ const Navbar = () => {
                   <li>
                     <NavLink to="/access-requests">Access Management</NavLink>
                   </li>
+                  <li>
+                    <NavLink to="/transaction-history">🔗 Transactions</NavLink>
+                  </li>
                 </>
               )}
               {tokenType === "doctor" && (

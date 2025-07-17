@@ -1,4 +1,3 @@
-import mongoose from "mongoose";
 import Patient from '../models/patient.model.js';
 import Doctor from '../models/doctor.model.js';
 import Report from '../models/report.model.js';
@@ -7,6 +6,7 @@ import Appointment from '../models/appointment.model.js';
 import {ApiError} from '../utils/apiError.js';
 import {ApiResponse} from '../utils/apiResponse.js';
 import {asyncHandler} from '../utils/asyncHandler.js';
+import contractService from "../services/contractService.js";
 
 const generateAccessAndRefreshTokens = async (_id) => {
     try{
@@ -45,15 +45,11 @@ const getPatientProfile = asyncHandler(async (req, res) => {
 });
 
 const getPatientAppointments = asyncHandler(async (req, res) => {
-  const { patientId } = req.params;
-  
   try {
-    // Verify that the authenticated user is requesting their own appointments
-    if (req.user._id.toString() !== patientId) {
-      return res.status(403).json(
-        new ApiError(403, "You are not authorized to view these appointments")
-      );
-    }
+    // Get patient ID from authenticated user (req.user is set by JWT middleware)
+    const patientId = req.user._id;
+    
+    console.log("Fetching appointments for patient ID:", patientId);
 
     const patient = await Patient.findById(patientId);
 
@@ -64,9 +60,11 @@ const getPatientAppointments = asyncHandler(async (req, res) => {
     }
 
     const appointmentsDetails = await Appointment.find({ patientId })
-      .populate("doctorId", "name email")
+      .populate("doctorId", "name email specialization")
       .populate("patientId", "name email")
       .sort({ createdAt: -1 }); // Sort by newest first
+
+    console.log("Found appointments:", appointmentsDetails.length);
 
     return res.status(200).json(
       new ApiResponse(
@@ -138,74 +136,48 @@ const getPatientReportById = asyncHandler(async (req, res) => {
 );
 
 const registerPatient = asyncHandler(async (req, res) => {
-    try {
-        const { name, email, password, walletAddress, age, gender, address, phone, bloodgroup,image } = req.body;
+    const { name, email, password, age, gender, address, phone, bloodgroup, walletAddress, image } = req.body;
         
-        console.log("Registration request received:", { 
-            name, email, walletAddress, 
-            age, gender, address, phone, bloodgroup ,image
-        });
-
-        // Basic validation
         if (!name || !email || !password || !walletAddress) {
-            throw new ApiError(400, "Name, email, password and wallet address are required");
+        throw new ApiError(400, "Name, email, password, and wallet address are required");
         }
 
-        // Validate email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            throw new ApiError(400, "Invalid email format");
-        }
-
-        // Check for existing patient (combined query for better performance)
-        const existingPatient = await Patient.findOne({ 
+    // Check if user already exists
+    const existedPatient = await Patient.findOne({
             $or: [{ email }, { walletAddress }] 
         });
         
-        if (existingPatient) {
-            const conflictField = existingPatient.email === email ? "email" : "wallet address";
-            throw new ApiError(400, `Patient already exists with this ${conflictField}`);
+    if (existedPatient) {
+        throw new ApiError(409, "Patient already exists with this email or wallet address");
         }
 
-        // Create new patient (without transaction)
+    // Create patient
         const patient = await Patient.create({
-            walletAddress,
             name,
             email,
-            password, // Make sure your Patient model hashes this
+        password,
             age,
             gender,
             address,
             phone,
-            bloodgroup,image
-        });
+        bloodGroup: bloodgroup,
+        walletAddress,
+        image,
+        contractDeploymentStatus: 'pending'
+    });
 
-        // Remove sensitive data before sending response
-        const patientResponse = patient.toObject();
-        delete patientResponse.password;
-        delete patientResponse.refreshToken;
+    const createdPatient = await Patient.findById(patient._id).select("-password -refreshToken");
 
-        console.log("Patient registered successfully:", patientResponse._id);
-        
-        return res.status(201).json(
-            new ApiResponse(201, patientResponse, "Patient registered successfully")
-        );
-
-    } catch (error) {
-        console.error("Registration error:", error);
-        
-        // Handle mongoose validation errors
-        if (error.name === 'ValidationError') {
-            const errors = Object.values(error.errors).map(err => err.message);
-            return res.status(400).json(
-                new ApiError(400, `Validation error: ${errors.join(', ')}`)
-            );
-        }
-        
-        return res.status(error.statusCode || 500).json(
-            new ApiError(error.statusCode || 500, error.message || "Registration failed")
-        );
+    if (!createdPatient) {
+        throw new ApiError(500, "Something went wrong while registering the patient");
     }
+
+    // Contract will be deployed on first login
+    return res.status(201).json(
+        new ApiResponse(201, {
+            patient: createdPatient
+        }, "Patient registered successfully. Contract will be deployed on first login.")
+        );
 });
 const loginPatient = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
@@ -233,6 +205,36 @@ const loginPatient = asyncHandler(async (req, res) => {
             throw new ApiError(401, "Invalid credentials");
         }
         console.log("Patient credentials matched successfully");
+
+        // Deploy contract on first login if not already deployed
+        if (!patient.contractAddress && patient.contractDeploymentStatus !== 'deployed') {
+            try {
+                console.log('First login detected, deploying contract for patient:', patient._id);
+                
+                // Update status to pending
+                await Patient.findByIdAndUpdate(patient._id, {
+                    contractDeploymentStatus: 'pending'
+                });
+
+                const deploymentResult = await contractService.deployPatientContract(patient);
+                
+                // Update patient with contract details
+                await Patient.findByIdAndUpdate(patient._id, {
+                    contractAddress: deploymentResult.contractAddress,
+                    contractDeploymentTx: deploymentResult.transactionHash,
+                    contractDeploymentBlockNumber: deploymentResult.blockNumber,
+                    contractDeploymentGasUsed: deploymentResult.gasUsed,
+                    contractDeploymentStatus: 'deployed'
+                });
+
+                console.log('Contract deployed on first login:', deploymentResult.contractAddress);
+            } catch (contractError) {
+                console.error('Contract deployment failed on first login:', contractError);
+                await Patient.findByIdAndUpdate(patient._id, {
+                    contractDeploymentStatus: 'failed'
+                });
+            }
+        }
         const tokens  = await generateAccessAndRefreshTokens(patient._id);
         const { accessToken, refreshToken } = tokens;
           console.log("Generated accessToken and refreshToken for patient:", accessToken, refreshToken);
@@ -296,7 +298,7 @@ try {
      patientId,
      doctorId,
     appointmentDate: new Date(appointmentDate),
-    pateintMobile: patientMobile, 
+    patientMobile: patientMobile, 
     status: 'pending'
   });
   console.log("Step 2: Appointment created:", appointment);
@@ -406,6 +408,114 @@ const deleteAppointment = asyncHandler(async (req, res) => {
   }
 };
 
+// Retry contract deployment for patients
+const retryContractDeployment = asyncHandler(async (req, res) => {
+    const patientId = req.user._id;
+    
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
+        throw new ApiError(404, "Patient not found");
+    }
+
+    // Check if contract is already deployed
+    if (patient.contractDeploymentStatus === 'deployed' && patient.contractAddress) {
+        return res.status(200).json(
+            new ApiResponse(200, {
+                contractAddress: patient.contractAddress,
+                transactionHash: patient.contractDeploymentTx
+            }, "Contract already deployed for this patient")
+        );
+    }
+
+    // Check if deployment is already in progress
+    if (patient.contractDeploymentStatus === 'pending') {
+        return res.status(400).json(
+            new ApiError(400, "Contract deployment is already in progress")
+        );
+    }
+
+    try {
+        // Update status to pending
+        await Patient.findByIdAndUpdate(patientId, {
+            contractDeploymentStatus: 'pending'
+        });
+
+        console.log('Retrying contract deployment for patient:', patientId);
+        
+        const deploymentResult = await contractService.deployPatientContract(patient);
+        
+        // Update patient with contract details
+        await Patient.findByIdAndUpdate(patientId, {
+            contractAddress: deploymentResult.contractAddress,
+            contractDeploymentTx: deploymentResult.transactionHash,
+            contractDeploymentStatus: 'deployed'
+        });
+
+        console.log('Contract deployment retry successful for patient:', {
+            patientId: patientId,
+            contractAddress: deploymentResult.contractAddress,
+            transactionHash: deploymentResult.transactionHash
+        });
+
+        return res.status(200).json(
+            new ApiResponse(200, {
+                contractAddress: deploymentResult.contractAddress,
+                transactionHash: deploymentResult.transactionHash
+            }, "Contract deployed successfully")
+        );
+
+    } catch (contractError) {
+        console.error('Contract deployment retry failed for patient:', patientId, contractError);
+        
+        // Update patient status to failed
+        await Patient.findByIdAndUpdate(patientId, {
+            contractDeploymentStatus: 'failed'
+        });
+
+        throw new ApiError(500, `Contract deployment failed: ${contractError.message}`);
+    }
+});
+
+// Get contract deployment status for a patient
+const getContractStatus = asyncHandler(async (req, res) => {
+    const patientId = req.user._id;
+    
+    const patient = await Patient.findById(patientId).select('contractAddress contractDeploymentTx contractDeploymentStatus contractDeploymentBlockNumber contractDeploymentGasUsed');
+    if (!patient) {
+        throw new ApiError(404, "Patient not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, {
+            contractAddress: patient.contractAddress,
+            contractDeploymentTx: patient.contractDeploymentTx,
+            contractDeploymentStatus: patient.contractDeploymentStatus,
+            contractDeploymentBlockNumber: patient.contractDeploymentBlockNumber,
+            contractDeploymentGasUsed: patient.contractDeploymentGasUsed,
+            hasContract: !!(patient.contractAddress && patient.contractDeploymentStatus === 'deployed')
+        }, "Contract status retrieved successfully")
+    );
+});
+
+// Verify patient account (can be called after email verification, etc.)
+const verifyPatientAccount = asyncHandler(async (req, res) => {
+    const patientId = req.user._id;
+    
+    const patient = await Patient.findByIdAndUpdate(
+        patientId, 
+        { isVerified: true },
+        { new: true }
+    ).select('-password -refreshToken');
+    
+    if (!patient) {
+        throw new ApiError(404, "Patient not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, patient, "Patient account verified successfully")
+    );
+});
+
 export {
     registerPatient,
     loginPatient,
@@ -416,5 +526,8 @@ export {
     askAppointment,
     deleteAppointment,
     getAllNotificationsForPatient,
+    retryContractDeployment,
+    getContractStatus,
+    verifyPatientAccount
 };
 

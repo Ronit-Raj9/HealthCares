@@ -8,26 +8,21 @@ import {
     viewMedicalRecord,
     getRecordById
 } from '../controllers/medicalRecord.controller.js';
-import { verifyPatientJWT } from '../middlewares/auth.middleware.js';
+import { verifyPatientJWT, verifyPatientOrDoctorJWT } from '../middlewares/auth.middleware.js';
 import multer from 'multer';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Protected routes - only authenticated patients can access these routes
-router.use(verifyPatientJWT);
+// Patient-only routes
+router.post('/upload', verifyPatientJWT, upload.single('file'), uploadMedicalRecord);
+router.get('/patient-records', verifyPatientJWT, getPatientRecords);
+router.post('/grant-access', verifyPatientJWT, grantAccess);
+router.post('/revoke-access', verifyPatientJWT, revokeAccess);
+router.get('/authorized-records', verifyPatientJWT, getAuthorizedRecords);
 
-// Medical record routes
-router.post('/upload', upload.single('file'), uploadMedicalRecord);
-router.get('/patient-records', getPatientRecords);
-router.post('/grant-access', grantAccess);
-router.post('/revoke-access', revokeAccess);
-router.get('/authorized-records', getAuthorizedRecords);
-
-// Add this route for viewing/downloading a record from IPFS
-router.get('/view/:ipfsHash', viewMedicalRecord);
-
-// Add this route for fetching a single record by its MongoDB _id
-router.get('/:id', getRecordById);
+// Routes accessible by both patients and doctors
+router.get('/view/:ipfsHash', verifyPatientOrDoctorJWT, viewMedicalRecord);
+router.get('/:id', verifyPatientOrDoctorJWT, getRecordById);
 
 export default router; 

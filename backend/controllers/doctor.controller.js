@@ -389,3 +389,30 @@ export const getAllNotificationsForPatient = async (req, res) => {
     );
   }
 };
+
+// Search patients by name or email
+export const searchPatients = asyncHandler(async (req, res) => {
+    const { term } = req.query;
+    
+    if (!term || term.trim().length < 2) {
+        throw new ApiError(400, "Search term must be at least 2 characters");
+    }
+
+    try {
+        const searchRegex = new RegExp(term.trim(), 'i'); // Case-insensitive search
+        
+        const patients = await Patient.find({
+            $or: [
+                { name: { $regex: searchRegex } },
+                { email: { $regex: searchRegex } }
+            ]
+        }).select('name email age gender bloodGroup image').limit(20); // Limit results and exclude sensitive data
+
+        return res.status(200).json(
+            new ApiResponse(200, patients, `Found ${patients.length} patients`)
+        );
+    } catch (error) {
+        console.error('Error searching patients:', error);
+        throw new ApiError(500, "Error searching patients: " + error.message);
+    }
+});

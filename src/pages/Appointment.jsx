@@ -8,6 +8,25 @@ import { setLoading } from "../redux/reducers/rootSlice";
 import toast from "react-hot-toast";
 import "../styles/appoint.css";
 
+// Add inline styles for status badges
+const statusBadgeStyles = {
+  pending: {
+    backgroundColor: '#fff3e0',
+    color: '#f57c00',
+    border: '1px solid #ffb74d'
+  },
+  confirmed: {
+    backgroundColor: '#f0fff4',
+    color: '#2e7d32',
+    border: '1px solid #4caf50'
+  },
+  cancelled: {
+    backgroundColor: '#ffebee',
+    color: '#c62828',
+    border: '1px solid #ef5350'
+  }
+};
+
 const Appointment = () => {
   const [appointments, setAppointments] = useState([]);
   const [error, setError] = useState(null);
@@ -26,19 +45,26 @@ const Appointment = () => {
       dispatch(setLoading(true));
       setError(null);
 
+      console.log("Fetching appointments for patient:", userId);
+
       const response = await fetchData(
-        `http://localhost:5000/api/patients/${userId}/appointments`
+        `http://localhost:5000/api/patients/appointments`
       );
+
+      console.log("Appointments API response:", response);
 
       if (response && response.data) {
         setAppointments(response.data);
+        console.log("Appointments set:", response.data);
       } else {
-        setError("No appointments data received");
+        console.log("No appointments data in response");
+        setAppointments([]);
       }
     } catch (error) {
       console.error("Error fetching appointments:", error);
-      setError(error.message || "Failed to fetch appointments");
-      toast.error("Failed to fetch appointments");
+      console.error("Error details:", error.response?.data);
+      setError(error.response?.data?.message || error.message || "Failed to fetch appointments");
+      toast.error(error.response?.data?.message || "Failed to fetch appointments");
     } finally {
       dispatch(setLoading(false));
     }
@@ -64,6 +90,9 @@ const Appointment = () => {
           ) : appointments.length === 0 ? (
             <div className="no-appointments" style={{ textAlign: 'center', padding: '2rem' }}>
               <p>You don't have any appointments yet.</p>
+              <p style={{ color: '#666', fontSize: '0.9rem', marginTop: '1rem' }}>
+                Visit the Doctors page to book an appointment with a doctor.
+              </p>
             </div>
           ) : (
             <div className="appointments-wrapper">
@@ -73,50 +102,61 @@ const Appointment = () => {
                     <tr>
                       <th>S.No</th>
                       <th>Doctor</th>
-                      <th>Patient</th>
-                      <th>Appointment Date</th>
-                      <th>Appointment Time</th>
+                      <th>Specialization</th>
+                      <th>Appointment Date & Time</th>
                       <th>Booking Date</th>
-                      <th>Booking Time</th>
+                      <th>Patient Mobile</th>
                       <th>Status</th>
-                      {userId === appointments[0]?.doctorId?._id && <th>Action</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {appointments.map((ele, i) => (
                       <tr key={ele?._id}>
                         <td>{i + 1}</td>
-                        <td>{ele?.doctorId?.name}</td>
-                        <td>{ele?.patientId?.name}</td>
-                        <td>{ele?.date}</td>
-                        <td>{ele?.time}</td>
+                        <td>{ele?.doctorId?.name || 'Unknown Doctor'}</td>
+                        <td>{ele?.doctorId?.specialization || 'N/A'}</td>
                         <td>
-                          {new Date(ele?.createdAt).toLocaleDateString("en-IN", {
+                          {ele?.appointmentDate 
+                            ? new Date(ele.appointmentDate).toLocaleString("en-IN", {
                             timeZone: "Asia/Kolkata",
-                          })}
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              })
+                            : 'N/A'
+                          }
                         </td>
                         <td>
-                          {new Date(ele?.createdAt).toLocaleTimeString("en-IN", {
+                          {ele?.createdAt 
+                            ? new Date(ele.createdAt).toLocaleDateString("en-IN", {
                             timeZone: "Asia/Kolkata",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            second: "2-digit",
-                            hour12: true,
-                          })}
+                              })
+                            : 'N/A'
+                          }
                         </td>
-                        <td>{ele?.status}</td>
-                        {userId === ele?.doctorId?._id && (
-                          <td>
-                            <button
-                              className={`btn user-btn accept-btn ${
-                                ele?.status === "Completed" ? "disable-btn" : ""
-                              }`}
-                              disabled={ele?.status === "Completed"}
-                            >
-                              Complete
-                            </button>
+                        <td>{ele?.patientMobile || 'N/A'}</td>
+                        <td>
+                          <span 
+                            className="status-badge"
+                            style={{
+                              padding: '4px 12px',
+                              borderRadius: '20px',
+                              fontSize: '0.85rem',
+                              fontWeight: '500',
+                              textTransform: 'capitalize',
+                              ...statusBadgeStyles[ele?.status?.toLowerCase()] || {
+                                backgroundColor: '#f5f5f5',
+                                color: '#666',
+                                border: '1px solid #ddd'
+                              }
+                            }}
+                          >
+                            {ele?.status || 'Unknown'}
+                          </span>
                           </td>
-                        )}
                       </tr>
                     ))}
                   </tbody>

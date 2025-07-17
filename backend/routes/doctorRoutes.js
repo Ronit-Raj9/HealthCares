@@ -7,7 +7,8 @@ import {
     getAppointments,
     updateAppointmentStatus,
     getAllDoctors,
-    getAllNotificationsForPatient
+    getAllNotificationsForPatient,
+    searchPatients
 } from '../controllers/doctor.controller.js';
 import  Doctor  from '../models/doctor.model.js';
 import { verifyDoctorJWT } from '../middlewares/auth.middleware.js';
@@ -22,4 +23,8 @@ doctorRouter.route('/profile/:doctorId').get( getDoctorProfile);
 doctorRouter.route('/:doctorId/appointments').get( getAppointments);
 doctorRouter.route('/:doctorId/appointments/:appointmentId').put( updateAppointmentStatus);
 doctorRouter.route('/:doctorId/notifications').get( verifyDoctorJWT,getAllNotificationsForPatient);
+
+// Patient search route for doctors
+doctorRouter.route('/search-patients').get(verifyDoctorJWT, searchPatients);
+
 export default doctorRouter;

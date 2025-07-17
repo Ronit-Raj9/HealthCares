@@ -16,6 +16,10 @@ const medicalRecordSchema = new Schema({
         type: String,
         required: true
     },
+    originalFilename: { // Original filename with extension from upload
+        type: String,
+        required: true
+    },
     description: {
         type: String
     },
@@ -27,12 +31,85 @@ const medicalRecordSchema = new Schema({
         type: String,
         required: true
     },
-    recordId_onchain: { // for future on-chain integration
+    recordId_onchain: { // on-chain record ID from smart contract
         type: Number
     },
-    patientContractAddress: { // for future on-chain integration
+    patientContractAddress: { // patient's deployed contract address
         type: String
     },
+    // Blockchain transaction tracking for your specific contract functions
+    blockchainTransactions: {
+        // Transaction for adding record (addBill/addPrescription/addReport)
+        upload: {
+            transactionHash: { type: String },
+            blockNumber: { type: Number },
+            gasUsed: { type: Number },
+            contractFunction: { 
+                type: String, 
+                enum: ['addBill', 'addPrescription', 'addReport'] 
+            },
+            timestamp: { type: Date },
+            status: { 
+                type: String, 
+                enum: ['pending', 'confirmed', 'failed'], 
+                default: 'pending' 
+            }
+        },
+        // Transactions for access control (requestAccess, approveAccess, revokeAccess)
+        accessTransactions: [{
+            doctorWalletAddress: { type: String },
+            doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor' },
+            transactionHash: { type: String },
+            blockNumber: { type: Number },
+            gasUsed: { type: Number },
+            contractFunction: { 
+                type: String, 
+                enum: ['requestAccess', 'approveAccess', 'revokeAccess', 'requestExtendAccess', 'approveExtendAccess'] 
+            },
+            timestamp: { type: Date, default: Date.now },
+            status: { 
+                type: String, 
+                enum: ['pending', 'confirmed', 'failed'], 
+                default: 'pending' 
+            },
+            // For approveAccess function parameters
+            expiryDuration: { type: Number }, // Duration in seconds
+            approvedRecordIds: [{ type: Number }], // Array of record IDs approved
+            recordType: { type: String, enum: ['prescription', 'bill', 'report'] }
+        }]
+    },
+    // Encryption-related fields
+    encryptionIv: { // initialization vector for AES encryption
+        type: String,
+        required: true
+    },
+    encryptionTag: { // authentication tag for AES-GCM (optional, not used in CBC mode)
+        type: String,
+        required: false
+    },
+    isEncrypted: { // flag to indicate if file is encrypted
+        type: Boolean,
+        default: true
+    },
+    // Key management for authorized users
+    encryptedSymmetricKeys: [{
+        userId: {
+            type: mongoose.Schema.Types.ObjectId,
+            refPath: 'userType'
+        },
+        userType: {
+            type: String,
+            enum: ['Patient', 'Doctor']
+        },
+        encryptedKey: { // patient's symmetric key encrypted with user's public key
+            type: String,
+            required: true
+        },
+        createdAt: {
+            type: Date,
+            default: Date.now
+        }
+    }],
     uploadedAt: {
         type: Date,
         default: Date.now
@@ -52,6 +129,11 @@ const medicalRecordSchema = new Schema({
         },
         accessExpiresAt: {
             type: Date
+        },
+        accessStatus: {
+            type: String,
+            enum: ['pending', 'approved', 'denied', 'revoked'],
+            default: 'approved'
         }
     }]
 });

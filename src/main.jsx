@@ -30,7 +30,6 @@ const config = createConfig({
 const queryClient = new QueryClient()
 
 createRoot(document.getElementById('root')).render(
-  <StrictMode>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider locale="en-US" wallets={wallets}>
@@ -39,6 +38,5 @@ createRoot(document.getElementById('root')).render(
           </Provider>
         </RainbowKitProvider>
       </QueryClientProvider>
-    </WagmiProvider>
-  </StrictMode>,
+  </WagmiProvider>,
 )

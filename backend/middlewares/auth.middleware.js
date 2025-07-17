@@ -8,14 +8,11 @@ import {asyncHandler} from '../utils/asyncHandler.js';
 dotenv.config();
 
 const verifyPatientJWT = asyncHandler(async (req, res, next) => {
-    console.log("Verifying Patient JWT...");
-    console.log("Cookies:", req.cookie);
-    console.log("Headers:", req.headers);
-    console.log("Authorization Header:", req.header("Authorization"));
+    // console.log("Verifying Patient JWT..."); // Reduced logging
     const token =
         req.cookies?.accessToken ||
         req.header("Authorization")?.replace("Bearer ", ""); // Separating token from header
-     console.log("Token received:", token);
+    // console.log("Token received:", token); // Reduced logging
     if (!token) {
         throw new ApiError(401, "Unauthorized request");
     }
@@ -24,7 +21,7 @@ const verifyPatientJWT = asyncHandler(async (req, res, next) => {
     const decodedToken = ( () => {
         try {
             return  jwt.verify(token, "hello123");
-        } catch (error) {
+        } catch {
             
             throw new ApiError(401, "Invalid or expired token");
         }
@@ -47,12 +44,12 @@ const verifyPatientJWT = asyncHandler(async (req, res, next) => {
 });
 
 const verifyDoctorJWT = asyncHandler(async (req, res, next) => {
-    console.log("Verifying Doctor JWT...");
+    // console.log("Verifying Doctor JWT..."); // Reduced logging
     const token =
         req.cookies?.accessToken ||
         req.header("Authorization")?.replace("Bearer ", ""); // Separating token from header
 
-    console.log("Token received:", token);
+    // console.log("Token received:", token); // Reduced logging
     if (!token) {
         throw new ApiError(401, "Unauthorized request");
     }
@@ -60,7 +57,7 @@ const verifyDoctorJWT = asyncHandler(async (req, res, next) => {
     const decodedToken = ( () => {
         try {
             return jwt.verify(token, "hello123");
-        } catch (error) {
+        } catch {
             throw new ApiError(401, "Invalid or expired token");
         }
     })();
@@ -79,4 +76,40 @@ const verifyDoctorJWT = asyncHandler(async (req, res, next) => {
     next(); // Move to next (Like logout, delete user, etc.)
 });
 
-export { verifyPatientJWT , verifyDoctorJWT };
+// Middleware that verifies either patient or doctor JWT
+const verifyPatientOrDoctorJWT = asyncHandler(async (req, res, next) => {
+    const token =
+        req.cookies?.accessToken ||
+        req.header("Authorization")?.replace("Bearer ", "");
+
+    if (!token) {
+        throw new ApiError(401, "Unauthorized request");
+    }
+
+    const decodedToken = (() => {
+        try {
+            return jwt.verify(token, "hello123");
+        } catch {
+            throw new ApiError(401, "Invalid or expired token");
+        }
+    })();
+
+    // Try to find user as patient first, then as doctor
+    let user = await Patient.findById(decodedToken?._id).select("-password -refreshToken");
+    let userType = 'patient';
+
+    if (!user) {
+        user = await Doctor.findById(decodedToken?._id).select("-password -refreshToken");
+        userType = 'doctor';
+    }
+
+    if (!user) {
+        throw new ApiError(401, "Invalid access token");
+    }
+
+    req.user = user;
+    req.userType = userType; // Add user type for reference
+    next();
+});
+
+export { verifyPatientJWT , verifyDoctorJWT, verifyPatientOrDoctorJWT };

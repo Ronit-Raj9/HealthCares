@@ -50,6 +50,76 @@ const  patientSchema = new Schema({
         type: String,
         
     },
+    // Blockchain contract address for this patient
+    contractAddress: {
+        type: String,
+        default: null,
+    },
+    // Contract deployment transaction hash
+    contractDeploymentTx: {
+        type: String,
+        default: null,
+    },
+    // Contract deployment status
+    contractDeploymentStatus: {
+        type: String,
+        enum: ['pending', 'deployed', 'failed'],
+        default: 'pending',
+    },
+    // Additional transaction tracking
+    contractDeploymentBlockNumber: {
+        type: Number,
+        default: null,
+    },
+    contractDeploymentGasUsed: {
+        type: Number,
+        default: null,
+    },
+    // Complete blockchain transaction history for this patient's contract
+    contractTransactionHistory: [{
+        transactionHash: {
+            type: String,
+            required: true
+        },
+        contractFunction: {
+            type: String,
+            enum: [
+                // Factory functions
+                'createHealthRecord',
+                // Patient profile functions  
+                'updatePatientName', 'updatePatientAge', 'updatePatientGender', 
+                'updatePatientHeight', 'updatePatientWeight', 'updatePatientBloodGroup',
+                // Record management functions
+                'addBill', 'addPrescription', 'addReport',
+                // Access control functions
+                'requestAccess', 'approveAccess', 'revokeAccess', 
+                'requestExtendAccess', 'approveExtendAccess'
+            ],
+            required: true
+        },
+        blockNumber: {
+            type: Number
+        },
+        gasUsed: {
+            type: Number
+        },
+        timestamp: {
+            type: Date,
+            default: Date.now
+        },
+        status: {
+            type: String,
+            enum: ['pending', 'confirmed', 'failed'],
+            default: 'pending'
+        },
+        // Additional context based on function
+        relatedData: {
+            recordId: { type: Number }, // For record-related transactions
+            recordType: { type: String, enum: ['bill', 'prescription', 'report'] },
+            doctorAddress: { type: String }, // For access-related transactions
+            recordName: { type: String } // For record uploads
+        }
+    }],
     isVerified: {
         type: Boolean,
         default: false,

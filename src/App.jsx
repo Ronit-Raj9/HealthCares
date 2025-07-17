@@ -23,8 +23,10 @@ import LoginDoctor from './pages/LoginDoctor'
 import DoctorAppointment from './pages/DoctorAppointment'
 import NotificationPatient from './pages/NotificationPatient'
 import MedicalRecords from './pages/MedicalRecords'
+import RecordDetail from './pages/RecordDetail'
 import AccessRequests from './pages/AccessRequests'
 import AuthorizedRecords from './pages/AuthorizedRecords'
+import TransactionHistory from './pages/TransactionHistory'
 
 function App() {
   return (
@@ -84,8 +86,10 @@ function App() {
           
           {/* Medical Records Routes */}
           <Route path="/medical-records" element={<MedicalRecords />} />
+          <Route path="/record/:id" element={<RecordDetail />} />
           <Route path="/access-requests" element={<AccessRequests />} />
           <Route path="/authorized-records" element={<AuthorizedRecords />} />
+          <Route path="/transaction-history" element={<TransactionHistory />} />
           
           {/* Keep error route at the bottom */}
           <Route path="*" element={<Error />} />
