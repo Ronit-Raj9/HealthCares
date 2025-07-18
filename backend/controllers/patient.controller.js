@@ -477,11 +477,173 @@ const retryContractDeployment = asyncHandler(async (req, res) => {
     }
 });
 
-// Get contract deployment status for a patient
+// ========================================
+// UNIFIED PROFILE UPDATE FUNCTION
+// ========================================
+
+const updatePatientProfile = asyncHandler(async (req, res) => {
+    const patientId = req.user._id;
+    const { 
+        name, 
+        email, 
+        phone, 
+        gender, 
+        address, 
+        age, 
+        height, 
+        weight, 
+        bloodGroup,
+        image,
+        password 
+    } = req.body;
+
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
+        throw new ApiError(404, "Patient not found");
+    }
+
+    // Validate blockchain-specific fields if they are provided
+    if (age && (isNaN(age) || age < 0 || age > 150)) {
+        throw new ApiError(400, "Age must be between 0 and 150");
+    }
+    if (height && (isNaN(height) || height < 50 || height > 300)) {
+        throw new ApiError(400, "Height must be between 50-300 cm");
+    }
+    if (weight && (isNaN(weight) || weight < 10 || weight > 500)) {
+        throw new ApiError(400, "Weight must be between 10-500 kg");
+    }
+    if (gender && !['Male', 'Female', 'Other', 'male', 'female', 'other', 'neither'].includes(gender)) {
+        throw new ApiError(400, "Invalid gender value");
+    }
+    if (bloodGroup && !['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].includes(bloodGroup)) {
+        throw new ApiError(400, "Invalid blood group");
+    }
+
+    try {
+        // Update database first
+        const updateData = {};
+        if (name) updateData.name = name.trim();
+        if (email) updateData.email = email.trim();
+        if (phone) updateData.phone = phone;
+        if (gender) updateData.gender = gender;
+        if (address) updateData.address = address;
+        if (age) updateData.age = parseInt(age);
+        if (height) updateData.height = parseInt(height);
+        if (weight) updateData.weight = parseInt(weight);
+        if (bloodGroup) updateData.bloodGroup = bloodGroup;
+        if (image) updateData.image = image;
+        if (password) updateData.password = password; // This will be hashed by the model pre-save hook
+
+        // Update database
+        const updatedPatient = await Patient.findByIdAndUpdate(
+            patientId,
+            updateData,
+            { new: true, runValidators: true }
+        ).select('-password -refreshToken');
+
+        let blockchainResult = null;
+        let blockchainError = null;
+
+        // Update blockchain if contract is deployed and blockchain-relevant fields are updated
+        const blockchainFields = { name, age, gender, height, weight, bloodGroup };
+        const hasBlockchainUpdates = Object.values(blockchainFields).some(value => value !== undefined);
+
+        if (hasBlockchainUpdates && patient.contractAddress && patient.contractDeploymentStatus === 'deployed') {
+            try {
+                console.log('Updating blockchain profile for patient:', patientId);
+                
+                // Prepare blockchain update data
+                const blockchainUpdateData = {};
+                if (name) blockchainUpdateData.name = name.trim();
+                if (age) blockchainUpdateData.age = parseInt(age);
+                if (gender) {
+                    // Normalize gender for blockchain
+                    const normalizedGender = gender.toLowerCase() === 'male' ? 'Male' : 
+                                           gender.toLowerCase() === 'female' ? 'Female' : 'Other';
+                    blockchainUpdateData.gender = normalizedGender;
+                }
+                if (height) blockchainUpdateData.height = parseInt(height);
+                if (weight) blockchainUpdateData.weight = parseInt(weight);
+                if (bloodGroup) blockchainUpdateData.bloodGroup = bloodGroup;
+
+                // Update blockchain profile (this will be a new function we'll create)
+                blockchainResult = await contractService.updatePatientProfile(
+                    patient.contractAddress,
+                    blockchainUpdateData
+                );
+
+                // Update blockchain sync status
+                await Patient.findByIdAndUpdate(patientId, {
+                    lastBlockchainProfileUpdate: new Date(),
+                    blockchainProfileSynced: true
+                });
+
+                // Track blockchain transaction
+                if (blockchainResult.transactionHash) {
+                    await trackPatientTransaction(patientId, {
+                        transactionHash: blockchainResult.transactionHash,
+                        contractFunction: 'updatePatientProfile',
+                        blockNumber: blockchainResult.blockNumber,
+                        gasUsed: blockchainResult.gasUsed,
+                        status: 'confirmed',
+                        relatedData: blockchainUpdateData
+                    });
+                }
+
+                console.log('Blockchain profile updated successfully:', blockchainResult.transactionHash);
+            } catch (error) {
+                console.error('Blockchain update failed:', error);
+                blockchainError = error.message;
+                
+                // Mark blockchain as out of sync
+                await Patient.findByIdAndUpdate(patientId, {
+                    blockchainProfileSynced: false
+                });
+            }
+        }
+
+        // Prepare response
+        const response = {
+            patient: updatedPatient,
+            databaseUpdated: true,
+            blockchainUpdated: blockchainResult ? true : false,
+            blockchainTransaction: blockchainResult ? {
+                transactionHash: blockchainResult.transactionHash,
+                blockNumber: blockchainResult.blockNumber,
+                gasUsed: blockchainResult.gasUsed
+            } : null,
+            blockchainError: blockchainError
+        };
+
+        let message = "Profile updated successfully";
+        if (blockchainResult) {
+            message += " (including blockchain)";
+        } else if (blockchainError) {
+            message += " (database only - blockchain update failed)";
+        } else if (!hasBlockchainUpdates) {
+            message += " (database only)";
+        } else if (!patient.contractAddress) {
+            message += " (database only - contract not deployed)";
+        }
+
+        return res.status(200).json(
+            new ApiResponse(200, response, message)
+        );
+
+    } catch (error) {
+        console.error('Profile update error:', error);
+        throw new ApiError(500, `Failed to update profile: ${error.message}`);
+    }
+});
+
+// ========================================
+// SIMPLIFIED CONTRACT STATUS FUNCTION
+// ========================================
+
 const getContractStatus = asyncHandler(async (req, res) => {
     const patientId = req.user._id;
     
-    const patient = await Patient.findById(patientId).select('contractAddress contractDeploymentTx contractDeploymentStatus contractDeploymentBlockNumber contractDeploymentGasUsed');
+    const patient = await Patient.findById(patientId).select('contractAddress contractDeploymentTx contractDeploymentStatus contractDeploymentBlockNumber contractDeploymentGasUsed blockchainProfileSynced lastBlockchainProfileUpdate');
     if (!patient) {
         throw new ApiError(404, "Patient not found");
     }
@@ -493,7 +655,9 @@ const getContractStatus = asyncHandler(async (req, res) => {
             contractDeploymentStatus: patient.contractDeploymentStatus,
             contractDeploymentBlockNumber: patient.contractDeploymentBlockNumber,
             contractDeploymentGasUsed: patient.contractDeploymentGasUsed,
-            hasContract: !!(patient.contractAddress && patient.contractDeploymentStatus === 'deployed')
+            hasContract: !!(patient.contractAddress && patient.contractDeploymentStatus === 'deployed'),
+            blockchainProfileSynced: patient.blockchainProfileSynced,
+            lastBlockchainProfileUpdate: patient.lastBlockchainProfileUpdate
         }, "Contract status retrieved successfully")
     );
 });
@@ -517,637 +681,6 @@ const verifyPatientAccount = asyncHandler(async (req, res) => {
     );
 });
 
-// ========================================
-// BLOCKCHAIN PROFILE UPDATE FUNCTIONS
-// ========================================
-
-// Update patient name on blockchain
-const updatePatientName = asyncHandler(async (req, res) => {
-    const { name } = req.body;
-    const patientId = req.user._id;
-
-    if (!name || !name.trim()) {
-        throw new ApiError(400, "Name is required");
-    }
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot update blockchain profile.");
-    }
-
-    try {
-        // Update on blockchain
-        const transactionResult = await contractService.updatePatientName(
-            patient.contractAddress,
-            name.trim()
-        );
-
-        // Update database
-        patient.name = name.trim();
-        patient.lastBlockchainProfileUpdate = new Date();
-        patient.blockchainProfileSynced = true;
-        await patient.save();
-
-        // Track transaction
-        await trackPatientTransaction(patientId, {
-            transactionHash: transactionResult.transactionHash,
-            contractFunction: 'updatePatientName',
-            blockNumber: transactionResult.blockNumber,
-            gasUsed: transactionResult.gasUsed,
-            status: 'confirmed',
-            relatedData: { newName: name.trim() }
-        });
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                transactionHash: transactionResult.transactionHash,
-                blockNumber: transactionResult.blockNumber,
-                gasUsed: transactionResult.gasUsed,
-                newName: name.trim()
-            }, "Patient name updated on blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Blockchain name update failed:', error);
-        throw new ApiError(500, `Failed to update name on blockchain: ${error.message}`);
-    }
-});
-
-// Update patient age on blockchain
-const updatePatientAge = asyncHandler(async (req, res) => {
-    const { age } = req.body;
-    const patientId = req.user._id;
-
-    if (!age || age < 0 || age > 150) {
-        throw new ApiError(400, "Valid age (0-150) is required");
-    }
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot update blockchain profile.");
-    }
-
-    try {
-        // Update on blockchain
-        const transactionResult = await contractService.updatePatientAge(
-            patient.contractAddress,
-            parseInt(age)
-        );
-
-        // Update database
-        patient.age = parseInt(age);
-        patient.lastBlockchainProfileUpdate = new Date();
-        patient.blockchainProfileSynced = true;
-        await patient.save();
-
-        // Track transaction
-        await trackPatientTransaction(patientId, {
-            transactionHash: transactionResult.transactionHash,
-            contractFunction: 'updatePatientAge',
-            blockNumber: transactionResult.blockNumber,
-            gasUsed: transactionResult.gasUsed,
-            status: 'confirmed',
-            relatedData: { newAge: parseInt(age) }
-        });
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                transactionHash: transactionResult.transactionHash,
-                blockNumber: transactionResult.blockNumber,
-                gasUsed: transactionResult.gasUsed,
-                newAge: parseInt(age)
-            }, "Patient age updated on blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Blockchain age update failed:', error);
-        throw new ApiError(500, `Failed to update age on blockchain: ${error.message}`);
-    }
-});
-
-// Update patient gender on blockchain
-const updatePatientGender = asyncHandler(async (req, res) => {
-    const { gender } = req.body;
-    const patientId = req.user._id;
-
-    if (!gender || !['Male', 'Female', 'Other'].includes(gender)) {
-        throw new ApiError(400, "Valid gender (Male, Female, Other) is required");
-    }
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot update blockchain profile.");
-    }
-
-    try {
-        // Update on blockchain
-        const transactionResult = await contractService.updatePatientGender(
-            patient.contractAddress,
-            gender
-        );
-
-        // Update database
-        patient.gender = gender;
-        patient.lastBlockchainProfileUpdate = new Date();
-        patient.blockchainProfileSynced = true;
-        await patient.save();
-
-        // Track transaction
-        await trackPatientTransaction(patientId, {
-            transactionHash: transactionResult.transactionHash,
-            contractFunction: 'updatePatientGender',
-            blockNumber: transactionResult.blockNumber,
-            gasUsed: transactionResult.gasUsed,
-            status: 'confirmed',
-            relatedData: { newGender: gender }
-        });
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                transactionHash: transactionResult.transactionHash,
-                blockNumber: transactionResult.blockNumber,
-                gasUsed: transactionResult.gasUsed,
-                newGender: gender
-            }, "Patient gender updated on blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Blockchain gender update failed:', error);
-        throw new ApiError(500, `Failed to update gender on blockchain: ${error.message}`);
-    }
-});
-
-// Update patient height on blockchain
-const updatePatientHeight = asyncHandler(async (req, res) => {
-    const { height } = req.body;
-    const patientId = req.user._id;
-
-    if (!height || height < 50 || height > 300) {
-        throw new ApiError(400, "Valid height (50-300 cm) is required");
-    }
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot update blockchain profile.");
-    }
-
-    try {
-        // Update on blockchain
-        const transactionResult = await contractService.updatePatientHeight(
-            patient.contractAddress,
-            parseInt(height)
-        );
-
-        // Update database
-        patient.height = parseInt(height);
-        patient.lastBlockchainProfileUpdate = new Date();
-        patient.blockchainProfileSynced = true;
-        await patient.save();
-
-        // Track transaction
-        await trackPatientTransaction(patientId, {
-            transactionHash: transactionResult.transactionHash,
-            contractFunction: 'updatePatientHeight',
-            blockNumber: transactionResult.blockNumber,
-            gasUsed: transactionResult.gasUsed,
-            status: 'confirmed',
-            relatedData: { newHeight: parseInt(height) }
-        });
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                transactionHash: transactionResult.transactionHash,
-                blockNumber: transactionResult.blockNumber,
-                gasUsed: transactionResult.gasUsed,
-                newHeight: parseInt(height)
-            }, "Patient height updated on blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Blockchain height update failed:', error);
-        throw new ApiError(500, `Failed to update height on blockchain: ${error.message}`);
-    }
-});
-
-// Update patient weight on blockchain
-const updatePatientWeight = asyncHandler(async (req, res) => {
-    const { weight } = req.body;
-    const patientId = req.user._id;
-
-    if (!weight || weight < 10 || weight > 500) {
-        throw new ApiError(400, "Valid weight (10-500 kg) is required");
-    }
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot update blockchain profile.");
-    }
-
-    try {
-        // Update on blockchain
-        const transactionResult = await contractService.updatePatientWeight(
-            patient.contractAddress,
-            parseInt(weight)
-        );
-
-        // Update database
-        patient.weight = parseInt(weight);
-        patient.lastBlockchainProfileUpdate = new Date();
-        patient.blockchainProfileSynced = true;
-        await patient.save();
-
-        // Track transaction
-        await trackPatientTransaction(patientId, {
-            transactionHash: transactionResult.transactionHash,
-            contractFunction: 'updatePatientWeight',
-            blockNumber: transactionResult.blockNumber,
-            gasUsed: transactionResult.gasUsed,
-            status: 'confirmed',
-            relatedData: { newWeight: parseInt(weight) }
-        });
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                transactionHash: transactionResult.transactionHash,
-                blockNumber: transactionResult.blockNumber,
-                gasUsed: transactionResult.gasUsed,
-                newWeight: parseInt(weight)
-            }, "Patient weight updated on blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Blockchain weight update failed:', error);
-        throw new ApiError(500, `Failed to update weight on blockchain: ${error.message}`);
-    }
-});
-
-// Update patient blood group on blockchain
-const updatePatientBloodGroup = asyncHandler(async (req, res) => {
-    const { bloodGroup } = req.body;
-    const patientId = req.user._id;
-
-    const validBloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-    if (!bloodGroup || !validBloodGroups.includes(bloodGroup)) {
-        throw new ApiError(400, `Valid blood group (${validBloodGroups.join(', ')}) is required`);
-    }
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot update blockchain profile.");
-    }
-
-    try {
-        // Update on blockchain
-        const transactionResult = await contractService.updatePatientBloodGroup(
-            patient.contractAddress,
-            bloodGroup
-        );
-
-        // Update database
-        patient.bloodGroup = bloodGroup;
-        patient.lastBlockchainProfileUpdate = new Date();
-        patient.blockchainProfileSynced = true;
-        await patient.save();
-
-        // Track transaction
-        await trackPatientTransaction(patientId, {
-            transactionHash: transactionResult.transactionHash,
-            contractFunction: 'updatePatientBloodGroup',
-            blockNumber: transactionResult.blockNumber,
-            gasUsed: transactionResult.gasUsed,
-            status: 'confirmed',
-            relatedData: { newBloodGroup: bloodGroup }
-        });
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                transactionHash: transactionResult.transactionHash,
-                blockNumber: transactionResult.blockNumber,
-                gasUsed: transactionResult.gasUsed,
-                newBloodGroup: bloodGroup
-            }, "Patient blood group updated on blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Blockchain blood group update failed:', error);
-        throw new ApiError(500, `Failed to update blood group on blockchain: ${error.message}`);
-    }
-});
-
-// Get patient details from blockchain (verification)
-const getBlockchainPatientDetails = asyncHandler(async (req, res) => {
-    const patientId = req.user._id;
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot fetch blockchain profile.");
-    }
-
-    try {
-        // Get details from blockchain
-        const blockchainDetails = await contractService.getPatientDetails(patient.contractAddress);
-        
-        // Compare with database
-        const databaseDetails = {
-            name: patient.name,
-            age: patient.age,
-            gender: patient.gender,
-            height: patient.height,
-            weight: patient.weight,
-            bloodGroup: patient.bloodGroup
-        };
-
-        const isSynced = JSON.stringify(blockchainDetails) === JSON.stringify(databaseDetails);
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                blockchainDetails,
-                databaseDetails,
-                isSynced,
-                lastSync: patient.lastBlockchainProfileUpdate
-            }, "Patient details fetched from blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Failed to fetch blockchain patient details:', error);
-        throw new ApiError(500, `Failed to fetch blockchain details: ${error.message}`);
-    }
-});
-
-// Sync database profile with blockchain (update database from blockchain)
-const syncProfileFromBlockchain = asyncHandler(async (req, res) => {
-    const patientId = req.user._id;
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot sync profile.");
-    }
-
-    try {
-        // Get details from blockchain
-        const blockchainDetails = await contractService.getPatientDetails(patient.contractAddress);
-        
-        // Update database with blockchain data
-        patient.name = blockchainDetails.name;
-        patient.age = blockchainDetails.age;
-        patient.gender = blockchainDetails.gender;
-        patient.height = blockchainDetails.height;
-        patient.weight = blockchainDetails.weight;
-        patient.bloodGroup = blockchainDetails.bloodGroup;
-        patient.lastBlockchainProfileUpdate = new Date();
-        patient.blockchainProfileSynced = true;
-        await patient.save();
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                updatedProfile: blockchainDetails,
-                syncTimestamp: patient.lastBlockchainProfileUpdate
-            }, "Profile synced from blockchain successfully")
-        );
-    } catch (error) {
-        console.error('Failed to sync profile from blockchain:', error);
-        throw new ApiError(500, `Failed to sync profile: ${error.message}`);
-    }
-});
-
-// ========================================
-// UTILITY VIEW FUNCTIONS
-// ========================================
-
-// Get patient ID from blockchain contract
-const getBlockchainPatientId = asyncHandler(async (req, res) => {
-    const patientId = req.user._id;
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot fetch blockchain patient ID.");
-    }
-
-    try {
-        const blockchainPatientId = await contractService.getPatientId(patient.contractAddress);
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                databasePatientId: patientId,
-                blockchainPatientId,
-                contractAddress: patient.contractAddress
-            }, "Blockchain patient ID fetched successfully")
-        );
-    } catch (error) {
-        console.error('Failed to fetch blockchain patient ID:', error);
-        throw new ApiError(500, `Failed to fetch blockchain patient ID: ${error.message}`);
-    }
-});
-
-// Check if a doctor's access has expired for this patient
-const checkDoctorAccessExpiry = asyncHandler(async (req, res) => {
-    const { doctorId } = req.params;
-    const patientId = req.user._id;
-
-    if (!doctorId) {
-        throw new ApiError(400, "Doctor ID is required");
-    }
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    const doctor = await Doctor.findById(doctorId);
-    if (!doctor) {
-        throw new ApiError(404, "Doctor not found");
-    }
-
-    // Check database access expiry
-    const now = new Date();
-    const accessRequest = await AccessRequest.findOne({
-        patientId,
-        doctorId,
-        status: 'approved'
-    });
-
-    let databaseExpiry = {
-        hasAccess: false,
-        isExpired: true,
-        expiryTime: null
-    };
-
-    if (accessRequest) {
-        const isExpired = accessRequest.accessExpiresAt && accessRequest.accessExpiresAt < now;
-        databaseExpiry = {
-            hasAccess: !isExpired,
-            isExpired: isExpired || false,
-            expiryTime: accessRequest.accessExpiresAt
-        };
-    }
-
-    // Check blockchain access expiry (if contract deployed)
-    let blockchainExpiry = {
-        hasAccess: false,
-        isExpired: true,
-        error: null
-    };
-
-    if (patient.contractAddress && patient.contractDeploymentStatus === 'deployed' && doctor.walletAddress) {
-        try {
-            const isExpired = await contractService.hasAccessExpired(
-                patient.contractAddress,
-                doctor.walletAddress
-            );
-            blockchainExpiry = {
-                hasAccess: !isExpired,
-                isExpired: isExpired,
-                error: null
-            };
-        } catch (error) {
-            blockchainExpiry.error = error.message;
-        }
-    }
-
-    return res.status(200).json(
-        new ApiResponse(200, {
-            doctor: {
-                id: doctor._id,
-                name: doctor.name,
-                walletAddress: doctor.walletAddress
-            },
-            databaseExpiry,
-            blockchainExpiry,
-            contractAddress: patient.contractAddress
-        }, "Doctor access expiry status fetched successfully")
-    );
-});
-
-// Verify contract integrity (compare database vs blockchain data)
-const verifyContractIntegrity = asyncHandler(async (req, res) => {
-    const patientId = req.user._id;
-
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-        throw new ApiError(404, "Patient not found");
-    }
-
-    if (!patient.contractAddress || patient.contractDeploymentStatus !== 'deployed') {
-        throw new ApiError(400, "Patient contract not deployed. Cannot verify integrity.");
-    }
-
-    try {
-        // Get patient details from blockchain
-        const blockchainDetails = await contractService.getPatientDetails(patient.contractAddress);
-        const blockchainPatientId = await contractService.getPatientId(patient.contractAddress);
-
-        // Compare with database
-        const databaseDetails = {
-            name: patient.name,
-            age: patient.age,
-            gender: patient.gender,
-            height: patient.height,
-            weight: patient.weight,
-            bloodGroup: patient.bloodGroup
-        };
-
-        // Check integrity
-        const isDataSynced = JSON.stringify(blockchainDetails) === JSON.stringify(databaseDetails);
-        
-        // Check access requests consistency
-        const approvedRequests = await AccessRequest.find({
-            patientId,
-            status: 'approved',
-            accessExpiresAt: { $gt: new Date() }
-        }).populate('doctorId', 'name walletAddress');
-
-        // Verify each doctor's blockchain access
-        const accessConsistencyChecks = await Promise.all(
-            approvedRequests.map(async (request) => {
-                if (!request.doctorId.walletAddress) {
-                    return {
-                        doctorId: request.doctorId._id,
-                        doctorName: request.doctorId.name,
-                        consistent: false,
-                        error: 'Doctor wallet address not available'
-                    };
-                }
-
-                try {
-                    const hasBlockchainAccess = !(await contractService.hasAccessExpired(
-                        patient.contractAddress,
-                        request.doctorId.walletAddress
-                    ));
-
-                    return {
-                        doctorId: request.doctorId._id,
-                        doctorName: request.doctorId.name,
-                        databaseAccess: true,
-                        blockchainAccess: hasBlockchainAccess,
-                        consistent: hasBlockchainAccess,
-                        expiryTime: request.accessExpiresAt
-                    };
-                } catch (error) {
-                    return {
-                        doctorId: request.doctorId._id,
-                        doctorName: request.doctorId.name,
-                        consistent: false,
-                        error: error.message
-                    };
-                }
-            })
-        );
-
-        const allAccessConsistent = accessConsistencyChecks.every(check => check.consistent);
-
-        return res.status(200).json(
-            new ApiResponse(200, {
-                contractAddress: patient.contractAddress,
-                blockchainPatientId,
-                profileIntegrity: {
-                    isDataSynced,
-                    databaseDetails,
-                    blockchainDetails,
-                    lastSync: patient.lastBlockchainProfileUpdate
-                },
-                accessIntegrity: {
-                    allAccessConsistent,
-                    totalApprovedRequests: approvedRequests.length,
-                    accessChecks: accessConsistencyChecks
-                },
-                overallIntegrity: isDataSynced && allAccessConsistent
-            }, "Contract integrity verification completed")
-        );
-    } catch (error) {
-        console.error('Contract integrity verification failed:', error);
-        throw new ApiError(500, `Failed to verify contract integrity: ${error.message}`);
-    }
-});
-
 export {
     registerPatient,
     loginPatient,
@@ -1161,18 +694,7 @@ export {
     retryContractDeployment,
     getContractStatus,
     verifyPatientAccount,
-    // Blockchain profile update functions
-    updatePatientName,
-    updatePatientAge,
-    updatePatientGender,
-    updatePatientHeight,
-    updatePatientWeight,
-    updatePatientBloodGroup,
-    getBlockchainPatientDetails,
-    syncProfileFromBlockchain,
-    // Utility view functions
-    getBlockchainPatientId,
-    checkDoctorAccessExpiry,
-    verifyContractIntegrity
+    // Unified profile update function
+    updatePatientProfile
 };
 

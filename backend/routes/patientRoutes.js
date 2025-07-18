@@ -10,19 +10,8 @@ import {
     deleteAppointment,
     retryContractDeployment,
     getContractStatus,
-    // Blockchain profile update functions
-    updatePatientName,
-    updatePatientAge,
-    updatePatientGender,
-    updatePatientHeight,
-    updatePatientWeight,
-    updatePatientBloodGroup,
-    getBlockchainPatientDetails,
-    syncProfileFromBlockchain,
-    // Blockchain utility functions
-    getBlockchainPatientId,
-    checkDoctorAccessExpiry,
-    verifyContractIntegrity
+    verifyPatientAccount,
+    updatePatientProfile
 } from "../controllers/patient.controller.js";
 
 import {verifyPatientJWT} from "../middlewares/auth.middleware.js";
@@ -32,6 +21,10 @@ const patientRouter = Router();
 patientRouter.route("/register").post(registerPatient);
 patientRouter.route("/login").post(loginPatient);
 patientRouter.route("/profile/:patientId").get(verifyPatientJWT, getPatientProfile);
+
+// Unified profile update route
+patientRouter.route("/profile/update").put(verifyPatientJWT, updatePatientProfile);
+
 patientRouter.route("/reports").get(verifyPatientJWT, getPatientReports);
 patientRouter.route("/reports/:reportId").get(verifyPatientJWT, getPatientReportById);
 
@@ -43,21 +36,7 @@ patientRouter.route("/appointments/:appointmentId").delete(verifyPatientJWT, del
 patientRouter.route("/contract/status").get(verifyPatientJWT, getContractStatus);
 patientRouter.route("/contract/deploy").post(verifyPatientJWT, retryContractDeployment);
 
-// Blockchain profile update routes
-patientRouter.route("/blockchain/update-name").put(verifyPatientJWT, updatePatientName);
-patientRouter.route("/blockchain/update-age").put(verifyPatientJWT, updatePatientAge);
-patientRouter.route("/blockchain/update-gender").put(verifyPatientJWT, updatePatientGender);
-patientRouter.route("/blockchain/update-height").put(verifyPatientJWT, updatePatientHeight);
-patientRouter.route("/blockchain/update-weight").put(verifyPatientJWT, updatePatientWeight);
-patientRouter.route("/blockchain/update-blood-group").put(verifyPatientJWT, updatePatientBloodGroup);
-
-// Blockchain profile verification routes
-patientRouter.route("/blockchain/details").get(verifyPatientJWT, getBlockchainPatientDetails);
-patientRouter.route("/blockchain/sync").post(verifyPatientJWT, syncProfileFromBlockchain);
-
-// Blockchain utility routes
-patientRouter.route("/blockchain/patient-id").get(verifyPatientJWT, getBlockchainPatientId);
-patientRouter.route("/blockchain/doctor-access-status").get(verifyPatientJWT, checkDoctorAccessExpiry);
-patientRouter.route("/blockchain/verify-contract").get(verifyPatientJWT, verifyContractIntegrity);
+// Account verification
+patientRouter.route("/verify").put(verifyPatientJWT, verifyPatientAccount);
 
 export default patientRouter;

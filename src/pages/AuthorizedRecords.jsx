@@ -167,17 +167,17 @@ const AuthorizedRecords = () => {
             }
 
             // Step 3: Execute mandatory blockchain transaction
-            try {
-                const provider = new ethers.BrowserProvider(window.ethereum);
-                const signer = await provider.getSigner();
-                
-                const contract = new ethers.Contract(
+                try {
+                    const provider = new ethers.BrowserProvider(window.ethereum);
+                    const signer = await provider.getSigner();
+                    
+                    const contract = new ethers.Contract(
                     contractInfo.data.contractAddress,
-                    [
-                        "function requestAccess() external"
-                    ],
-                    signer
-                );
+                        [
+                            "function requestAccess() external"
+                        ],
+                        signer
+                    );
 
                 toast('Please confirm the blockchain transaction in MetaMask...', {
                     icon: '🔗',
@@ -186,8 +186,8 @@ const AuthorizedRecords = () => {
                         backgroundColor: '#dbeafe'
                     }
                 });
-                
-                const tx = await contract.requestAccess();
+
+                    const tx = await contract.requestAccess();
                 toast('Blockchain request submitted. Waiting for confirmation...', {
                     icon: 'ℹ️',
                     style: {
@@ -195,11 +195,11 @@ const AuthorizedRecords = () => {
                         backgroundColor: '#dbeafe'
                     }
                 });
-                
-                await tx.wait();
-                toast.success('Blockchain access request confirmed!');
-            } catch (blockchainError) {
-                console.error('Blockchain requestAccess failed:', blockchainError);
+                    
+                    await tx.wait();
+                    toast.success('Blockchain access request confirmed!');
+                } catch (blockchainError) {
+                    console.error('Blockchain requestAccess failed:', blockchainError);
                 
                 // Check if user cancelled transaction
                 if (blockchainError.code === 4001 || blockchainError.message.includes('denied')) {
@@ -776,19 +776,19 @@ const AuthorizedRecords = () => {
                                 {authorizedRecords.map(record => {
                                     const expiryStatus = getAccessExpiryStatus(record.accessExpiresAt);
                                     return (
-                                        <div key={record._id} className="record-card">
-                                            <div className="record-header">
-                                                <h4>{record.name}</h4>
-                                                <div className="record-badges">
-                                                    <span className={`badge ${record.recordType}`}>
-                                                        {record.recordType}
-                                                    </span>
-                                                    {record.isEncrypted && (
-                                                        <span className="badge encrypted">🔐 Encrypted</span>
-                                                    )}
-                                                    {record.hasBlockchainVerification && (
-                                                        <span className="badge blockchain">⛓️ Blockchain</span>
-                                                    )}
+                                    <div key={record._id} className="record-card">
+                                        <div className="record-header">
+                                            <h4>{record.name}</h4>
+                                            <div className="record-badges">
+                                                <span className={`badge ${record.recordType}`}>
+                                                    {record.recordType}
+                                                </span>
+                                                {record.isEncrypted && (
+                                                    <span className="badge encrypted">🔐 Encrypted</span>
+                                                )}
+                                                {record.hasBlockchainVerification && (
+                                                    <span className="badge blockchain">⛓️ Blockchain</span>
+                                                )}
                                                     <span 
                                                         className={`badge expiry ${expiryStatus.status}`}
                                                         style={{ color: expiryStatus.color }}
@@ -801,24 +801,24 @@ const AuthorizedRecords = () => {
                                                         }
                                                     </span>
                                                 </div>
-                                            </div>
-                                            <div className="record-info">
-                                                <p><strong>Patient:</strong> {record.patientName}</p>
-                                                <p><strong>Description:</strong> {record.description || 'No description'}</p>
-                                                <p><strong>Original File:</strong> {record.originalFilename}</p>
-                                                <p><strong>Access Expires:</strong> {new Date(record.accessExpiresAt).toLocaleDateString()}</p>
-                                                {record.patientContractAddress && (
-                                                    <p><strong>Patient Contract:</strong> {record.patientContractAddress.slice(0, 6)}...{record.patientContractAddress.slice(-4)}</p>
-                                                )}
-                                            </div>
-                                            <div className="record-actions">
-                                                <button
-                                                    onClick={() => viewRecord(record)}
+                                        </div>
+                                        <div className="record-info">
+                                            <p><strong>Patient:</strong> {record.patientName}</p>
+                                            <p><strong>Description:</strong> {record.description || 'No description'}</p>
+                                            <p><strong>Original File:</strong> {record.originalFilename}</p>
+                                            <p><strong>Access Expires:</strong> {new Date(record.accessExpiresAt).toLocaleDateString()}</p>
+                                            {record.patientContractAddress && (
+                                                <p><strong>Patient Contract:</strong> {record.patientContractAddress.slice(0, 6)}...{record.patientContractAddress.slice(-4)}</p>
+                                            )}
+                                        </div>
+                                        <div className="record-actions">
+                                            <button
+                                                onClick={() => viewRecord(record)}
                                                     disabled={!isConnected || expiryStatus.status === 'expired'}
-                                                    className="view-record-btn"
-                                                >
-                                                    🔍 View & Verify Record
-                                                </button>
+                                                className="view-record-btn"
+                                            >
+                                                🔍 View & Verify Record
+                                            </button>
                                                 {(expiryStatus.status === 'expiring' || expiryStatus.status === 'active') && (
                                                     <button
                                                         onClick={() => requestAccessExtension(record.patientId, record.patientName, record.accessRequestId)}

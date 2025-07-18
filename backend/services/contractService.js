@@ -545,6 +545,96 @@ class ContractService {
         }
     }
 
+    /**
+     * Update multiple patient profile fields on blockchain in batch
+     * @param {string} contractAddress - Patient's contract address
+     * @param {Object} updateData - Object containing fields to update
+     * @returns {Object} - Transaction details
+     */
+    async updatePatientProfile(contractAddress, updateData) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const transactions = [];
+            let lastTx = null;
+            let totalGasUsed = 0;
+            
+            // Execute updates sequentially to avoid nonce conflicts
+            if (updateData.name) {
+                console.log('Updating name on blockchain:', updateData.name);
+                const tx = await contract.updatePatientName(updateData.name);
+                const receipt = await tx.wait();
+                lastTx = tx;
+                totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
+                transactions.push({ field: 'name', txHash: tx.hash });
+            }
+            
+            if (updateData.age) {
+                console.log('Updating age on blockchain:', updateData.age);
+                const tx = await contract.updatePatientAge(updateData.age);
+                const receipt = await tx.wait();
+                lastTx = tx;
+                totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
+                transactions.push({ field: 'age', txHash: tx.hash });
+            }
+            
+            if (updateData.gender) {
+                console.log('Updating gender on blockchain:', updateData.gender);
+                const tx = await contract.updatePatientGender(updateData.gender);
+                const receipt = await tx.wait();
+                lastTx = tx;
+                totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
+                transactions.push({ field: 'gender', txHash: tx.hash });
+            }
+            
+            if (updateData.height) {
+                console.log('Updating height on blockchain:', updateData.height);
+                const tx = await contract.updatePatientHeight(updateData.height);
+                const receipt = await tx.wait();
+                lastTx = tx;
+                totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
+                transactions.push({ field: 'height', txHash: tx.hash });
+            }
+            
+            if (updateData.weight) {
+                console.log('Updating weight on blockchain:', updateData.weight);
+                const tx = await contract.updatePatientWeight(updateData.weight);
+                const receipt = await tx.wait();
+                lastTx = tx;
+                totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
+                transactions.push({ field: 'weight', txHash: tx.hash });
+            }
+            
+            if (updateData.bloodGroup) {
+                console.log('Updating blood group on blockchain:', updateData.bloodGroup);
+                const tx = await contract.updatePatientBloodGroup(updateData.bloodGroup);
+                const receipt = await tx.wait();
+                lastTx = tx;
+                totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
+                transactions.push({ field: 'bloodGroup', txHash: tx.hash });
+            }
+            
+            if (!lastTx) {
+                throw new Error('No blockchain updates to perform');
+            }
+            
+            const finalReceipt = await lastTx.wait();
+            
+            return {
+                transactionHash: lastTx.hash,
+                blockNumber: finalReceipt.blockNumber,
+                gasUsed: totalGasUsed,
+                contractFunction: 'updatePatientProfile',
+                fieldsUpdated: transactions.map(t => t.field),
+                allTransactions: transactions
+            };
+        } catch (error) {
+            console.error('Error updating patient profile on blockchain:', error);
+            throw error;
+        }
+    }
+
     // ========================================
     // ACCESS EXTENSION FUNCTIONS
     // ========================================
