@@ -11,7 +11,8 @@ const AccessRequests = () => {
     const [accessRequests, setAccessRequests] = useState([]);
     const [extensionRequests, setExtensionRequests] = useState([]);
     const [authorizedAccess, setAuthorizedAccess] = useState([]);
-    const [activeTab, setActiveTab] = useState('requests'); // 'requests', 'extensions', 'authorized'
+    const [accessMonitoring, setAccessMonitoring] = useState(null);
+    const [activeTab, setActiveTab] = useState('requests'); // 'requests', 'extensions', 'authorized', 'monitoring'
     const [loading, setLoading] = useState(true);
     const [selectedRequest, setSelectedRequest] = useState(null);
     const [myRecords, setMyRecords] = useState([]);
@@ -30,6 +31,8 @@ const AccessRequests = () => {
             fetchExtensionRequests();
         } else if (activeTab === 'authorized') {
             fetchAuthorizedAccess();
+        } else if (activeTab === 'monitoring') {
+            fetchAccessMonitoring();
         }
         fetchMyRecords();
     }, [activeTab]);
@@ -73,6 +76,19 @@ const AccessRequests = () => {
         }
     };
 
+    // Fetch access monitoring data for this patient
+    const fetchAccessMonitoring = async () => {
+        setLoading(true);
+        try {
+            const response = await fetchData(`${BACKEND_URL}/api/access-requests/patient/access-monitoring`);
+            setAccessMonitoring(response.data);
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Error fetching access monitoring data');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     // Fetch patient's medical records for selection
     const fetchMyRecords = async () => {
         try {
@@ -104,12 +120,25 @@ const AccessRequests = () => {
             return toast.error('Please connect your wallet to approve access requests');
         }
 
+        // Validate access duration
+        const durationValue = parseInt(accessDuration);
+        if (!durationValue || durationValue < 1 || durationValue > 365) {
+            return toast.error('Please select a valid access duration');
+        }
+
         setResponseLoading(true);
         try {
             // Generate patient signature for encryption key derivation
             // IMPORTANT: Use the SAME message as file encryption to ensure same key
             const message = ENCRYPTION_KEY_MESSAGE;
             const patientSignature = await signMessageAsync({ message });
+
+            console.log('Approving access request:', {
+                requestId,
+                selectedRecords: selectedRecords.length,
+                accessDuration: durationValue,
+                accessDurationDays: `${durationValue} days`
+            });
 
             await fetchData(
                 `${BACKEND_URL}/api/access-requests/patient/respond`,
@@ -119,11 +148,11 @@ const AccessRequests = () => {
                     action: 'approve',
                     selectedRecords,
                     patientNotes: patientNotes.trim() || undefined,
-                    accessDuration: parseInt(accessDuration),
+                    accessDuration: durationValue,
                     patientSignature
                 }
             );
-            toast.success('Access request approved successfully');
+            toast.success(`Access approved successfully for ${durationValue} days!`);
             setSelectedRequest(null);
             setSelectedRecords([]);
             setPatientNotes('');
@@ -133,6 +162,7 @@ const AccessRequests = () => {
                 fetchAuthorizedAccess();
             }
         } catch (error) {
+            console.error('Access approval error:', error);
             toast.error(error.response?.data?.message || 'Error approving request');
         } finally {
             setResponseLoading(false);
@@ -306,6 +336,12 @@ const AccessRequests = () => {
                         onClick={() => setActiveTab('authorized')}
                     >
                         ✅ Authorized Access ({authorizedAccess.length})
+                    </button>
+                    <button 
+                        className={`tab-btn ${activeTab === 'monitoring' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('monitoring')}
+                    >
+                        👁️ Access Monitoring
                     </button>
                 </div>
 
@@ -521,12 +557,24 @@ const AccessRequests = () => {
 
                                         <div className="access-content">
                                             <div className="access-details">
-                                                <p><strong>Access Duration:</strong> {access.accessDuration} days</p>
-                                                <p><strong>Expires:</strong> {new Date(access.expiresAt).toLocaleDateString()}</p>
-                                                <p><strong>Records Access:</strong> {access.authorizedRecords?.length || 0} records</p>
+                                                <p><strong>Access Duration:</strong> {access.accessDuration ? `${access.accessDuration} days` : 'Not specified'}</p>
+                                                <p><strong>Expires:</strong> {
+                                                    access.accessExpiresAt ? 
+                                                        new Date(access.accessExpiresAt).toLocaleDateString() : 
+                                                        'Never'
+                                                }</p>
+                                                <p><strong>Status:</strong> 
+                                                    <span className={`access-status ${access.isExpired ? 'expired' : 'active'}`}>
+                                                        {access.isExpired ? '❌ Expired' : '✅ Active'}
+                                                    </span>
+                                                </p>
+                                                <p><strong>Records Access:</strong> {access.recordsCount || 0} records</p>
                                                 <p><strong>Original Reason:</strong> {access.requestReason}</p>
                                                 {access.patientNotes && (
                                                     <p><strong>Your Notes:</strong> {access.patientNotes}</p>
+                                                )}
+                                                {access.extensionRequestsCount > 0 && (
+                                                    <p><strong>Pending Extensions:</strong> {access.extensionRequestsCount}</p>
                                                 )}
                                             </div>
 
@@ -549,6 +597,153 @@ const AccessRequests = () => {
                                         </div>
                                     </div>
                                 ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Access Monitoring Tab */}
+                {activeTab === 'monitoring' && (
+                    <div className="monitoring-section">
+                        <h3>Access Monitoring Dashboard</h3>
+                        <p className="section-description">
+                            Real-time monitoring of doctor access to your medical records with blockchain verification.
+                        </p>
+                        
+                        {loading ? (
+                            <div className="loading-state">
+                                <p>⏳ Loading access monitoring data...</p>
+                            </div>
+                        ) : !accessMonitoring ? (
+                            <div className="no-data">
+                                <div className="empty-state">
+                                    <h3>No Monitoring Data</h3>
+                                    <p>Unable to fetch access monitoring data. Please try again later.</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="monitoring-dashboard">
+                                {/* Contract Status */}
+                                <div className="contract-status-card">
+                                    <h4>📋 Contract Status</h4>
+                                    <div className="status-grid">
+                                        <div className="status-item">
+                                            <span className="status-label">Contract Deployed:</span>
+                                            <span className={`status-value ${accessMonitoring.contractDeployed ? 'success' : 'warning'}`}>
+                                                {accessMonitoring.contractDeployed ? '✅ Yes' : '⚠️ No'}
+                                            </span>
+                                        </div>
+                                        {accessMonitoring.contractAddress && (
+                                            <div className="status-item">
+                                                <span className="status-label">Contract Address:</span>
+                                                <span className="status-value">
+                                                    {accessMonitoring.contractAddress.slice(0, 6)}...{accessMonitoring.contractAddress.slice(-4)}
+                                                </span>
+                                            </div>
+                                        )}
+                                        <div className="status-item">
+                                            <span className="status-label">Last Updated:</span>
+                                            <span className="status-value">
+                                                {new Date(accessMonitoring.lastChecked).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+
+
+                                {/* Individual Access Monitoring */}
+                                <div className="access-list-card">
+                                    <h4>🔍 Individual Access Status</h4>
+                                    {(!accessMonitoring.accessMonitoring || accessMonitoring.accessMonitoring.length === 0) ? (
+                                        <div className="no-monitoring">
+                                            <p>No active access grants to monitor</p>
+                                        </div>
+                                    ) : (
+                                        <div className="monitoring-list">
+                                            {accessMonitoring.accessMonitoring.map(access => (
+                                                <div key={access.id} className="monitoring-item">
+                                                    <div className="monitoring-header">
+                                                        <div className="doctor-info">
+                                                            <h5>Dr. {access.doctor.name}</h5>
+                                                            <p className="doctor-email">{access.doctor.email}</p>
+                                                            <p className="specialization">{access.doctor.specialization}</p>
+                                                        </div>
+                                                        <div className="monitoring-status">
+                                                            <span className={`consistency-badge ${
+                                                                access.isConsistent === null ? 'unknown' :
+                                                                access.isConsistent === 'limitation' ? 'info' : // New status for blockchain limitations
+                                                                access.isConsistent ? 'consistent' : 'inconsistent'
+                                                            }`}>
+                                                                {access.isConsistent === null ? '🔄 No Blockchain' :
+                                                                 access.isConsistent === 'limitation' ? '🔄 Blockchain Limitation' :
+                                                                 access.isConsistent ? '✅ Consistent' : '⚠️ Inconsistent'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div className="monitoring-details">
+                                                        <div className="database-status">
+                                                            <h6>📊 Database Status</h6>
+                                                            <p><strong>Expires:</strong> {new Date(access.databaseStatus.expiresAt).toLocaleDateString()}</p>
+                                                            <p><strong>Status:</strong> 
+                                                                <span className={`status ${access.databaseStatus.isExpired ? 'expired' : 'active'}`}>
+                                                                    {access.databaseStatus.isExpired ? '❌ Expired' : '✅ Active'}
+                                                                </span>
+                                                            </p>
+                                                            <p><strong>Records:</strong> {access.databaseStatus.recordsCount}</p>
+                                                            {access.databaseStatus.pendingExtensions > 0 && (
+                                                                <p><strong>Pending Extensions:</strong> {access.databaseStatus.pendingExtensions}</p>
+                                                            )}
+                                                        </div>
+                                                        
+                                                        {access.blockchainStatus && (
+                                                            <div className="blockchain-status">
+                                                                <h6>⛓️ Blockchain Status</h6>
+                                                                {access.blockchainStatus.error ? (
+                                                                    <p className="error">Error: {access.blockchainStatus.error}</p>
+                                                                ) : access.blockchainStatus.blockchainLimitation ? (
+                                                                    <div className="blockchain-limitation">
+                                                                        <p><strong>Status:</strong> 
+                                                                            <span className="status info">🔄 Cannot Monitor from Backend</span>
+                                                                        </p>
+                                                                        <p className="limitation-note">
+                                                                            Smart contract requires doctor's wallet to check access status.
+                                                                            Doctor must verify access directly using their wallet.
+                                                                        </p>
+                                                                        {access.blockchainStatus.extensionRequest && (
+                                                                            <p><strong>Extension Request:</strong> 
+                                                                                {access.blockchainStatus.extensionRequest.additionalTime / (24 * 60 * 60)} days pending
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <>
+                                                                        <p><strong>Has Expired:</strong> 
+                                                                            <span className={`status ${access.blockchainStatus.hasExpired ? 'expired' : 'active'}`}>
+                                                                                {access.blockchainStatus.hasExpired ? '❌ Yes' : '✅ No'}
+                                                                            </span>
+                                                                        </p>
+                                                                        <p><strong>Active Access:</strong> 
+                                                                            <span className={`status ${access.blockchainStatus.hasActiveAccess ? 'active' : 'expired'}`}>
+                                                                                {access.blockchainStatus.hasActiveAccess ? '✅ Yes' : '❌ No'}
+                                                                            </span>
+                                                                        </p>
+                                                                        {access.blockchainStatus.extensionRequest && (
+                                                                            <p><strong>Extension Request:</strong> 
+                                                                                {access.blockchainStatus.extensionRequest.additionalTime / (24 * 60 * 60)} days pending
+                                                                            </p>
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </div>

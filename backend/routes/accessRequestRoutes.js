@@ -17,6 +17,13 @@ import {
     getPatientExtensionRequests,
     getDoctorExtensionRequests,
     checkBlockchainExtensionStatus,
+    // Access monitoring functions
+    checkAccessExpiry,
+    getDoctorAccessStatus,
+    getPatientAccessMonitoring,
+    refreshAccessStatus,
+    // Patient authorized access
+    getPatientAuthorizedAccess,
     // Access revocation functions
     revokeCompleteAccess,
     getRevokedAccessRequests
@@ -35,27 +42,39 @@ accessRequestRouter.route('/doctor/blockchain-authorized-records').get(verifyDoc
 // Patient routes
 accessRequestRouter.route('/patient/requests').get(verifyPatientJWT, getPatientRequests);
 accessRequestRouter.route('/patient/respond').post(verifyPatientJWT, respondToAccessRequest);
-accessRequestRouter.route('/patient/authorized-access').get(verifyPatientJWT, getAuthorizedRecords);
-accessRequestRouter.route('/revoke/:accessRequestId').delete(verifyPatientJWT, revokeAccess);
-accessRequestRouter.route('/revoke-complete/:doctorId').delete(verifyPatientJWT, revokeCompleteAccess);
-accessRequestRouter.route('/patient/revoked-requests').get(verifyPatientJWT, getRevokedAccessRequests);
+accessRequestRouter.route('/patient/authorized-access').get(verifyPatientJWT, getPatientAuthorizedAccess);
 
-// Shared routes (doctor or patient can access)
+// Common routes
 accessRequestRouter.route('/details/:requestId').get(verifyJWT, getAccessRequestDetails);
-
-// Admin/system routes
-accessRequestRouter.route('/cleanup-expired').post(cleanupExpiredAccess);
+accessRequestRouter.route('/revoke').post(verifyPatientJWT, revokeAccess);
 
 // Access extension routes - Doctor routes
 accessRequestRouter.route('/doctor/request-extension').post(verifyDoctorJWT, requestAccessExtension);
 accessRequestRouter.route('/doctor/extension-requests').get(verifyDoctorJWT, getDoctorExtensionRequests);
 
-// Access extension routes - Patient routes  
+// Access extension routes - Patient routes
+accessRequestRouter.route('/patient/extension-requests').get(verifyPatientJWT, getPatientExtensionRequests);
 accessRequestRouter.route('/patient/approve-extension').post(verifyPatientJWT, approveAccessExtension);
 accessRequestRouter.route('/patient/deny-extension').post(verifyPatientJWT, denyAccessExtension);
-accessRequestRouter.route('/patient/extension-requests').get(verifyPatientJWT, getPatientExtensionRequests);
 
 // Blockchain extension status
 accessRequestRouter.route('/blockchain/extension-status/:contractAddress/:doctorAddress').get(verifyJWT, checkBlockchainExtensionStatus);
+
+// Access monitoring routes - Doctor routes
+accessRequestRouter.route('/doctor/check-access-expiry/:contractAddress').get(verifyDoctorJWT, checkAccessExpiry);
+accessRequestRouter.route('/doctor/access-status/:contractAddress').get(verifyDoctorJWT, getDoctorAccessStatus);
+
+// Access monitoring routes - Patient routes
+accessRequestRouter.route('/patient/access-monitoring').get(verifyPatientJWT, getPatientAccessMonitoring);
+
+// Access monitoring routes - Common
+accessRequestRouter.route('/refresh-access-status').post(verifyJWT, refreshAccessStatus);
+
+// Admin/System routes
+accessRequestRouter.route('/cleanup-expired').post(cleanupExpiredAccess);
+
+// Access revocation routes
+accessRequestRouter.route('/revoke-complete').post(verifyPatientJWT, revokeCompleteAccess);
+accessRequestRouter.route('/revoked-requests').get(verifyJWT, getRevokedAccessRequests);
 
 export default accessRequestRouter; 

@@ -12,18 +12,25 @@ const BACKEND_URL = 'http://localhost:5000';
 
 const AuthorizedRecords = () => {
     // State management
-    const [activeTab, setActiveTab] = useState('search'); // 'search', 'requests', 'authorized', 'blockchain', 'extensions'
+    const [activeTab, setActiveTab] = useState('search'); // 'search', 'requests', 'authorized', 'blockchain', 'extensions', 'monitoring'
     const [searchTerm, setSearchTerm] = useState('');
     const [patients, setPatients] = useState([]);
     const [searchLoading, setSearchLoading] = useState(false);
     const [authorizedRecords, setAuthorizedRecords] = useState([]);
     const [blockchainRecords, setBlockchainRecords] = useState([]);
     const [extensionRequests, setExtensionRequests] = useState([]);
+    const [accessMonitoring, setAccessMonitoring] = useState([]);
     const [requestLoading, setRequestLoading] = useState(false);
     const [myRequests, setMyRequests] = useState([]);
     const [systemStatus, setSystemStatus] = useState(null);
     const [hashDebugInfo, setHashDebugInfo] = useState(null);
     const [showHashDebug, setShowHashDebug] = useState(false);
+    const [showExtensionModal, setShowExtensionModal] = useState(false);
+    const [selectedRecordForExtension, setSelectedRecordForExtension] = useState(null);
+    const [extensionFormData, setExtensionFormData] = useState({
+        additionalDays: 30,
+        reason: ''
+    });
     
     const { isConnected, address } = useAccount();
     const { signMessageAsync } = useSignMessage();
@@ -53,6 +60,8 @@ const AuthorizedRecords = () => {
             fetchBlockchainRecords();
         } else if (activeTab === 'extensions') {
             fetchExtensionRequests();
+        } else if (activeTab === 'monitoring') {
+            fetchAccessMonitoring();
         }
 
         fetchSystemStatus();
@@ -139,6 +148,73 @@ const AuthorizedRecords = () => {
             toast.error(error.response?.data?.message || 'Error fetching extension requests');
         }
     };
+
+    // Fetch access monitoring data
+    const fetchAccessMonitoring = async () => {
+        try {
+            const patientRequests = await fetchData(`${BACKEND_URL}/api/access-requests/doctor/requests`);
+            const authorizedRequests = patientRequests.data.filter(req => req.status === 'approved');
+            
+            // Get access status for each patient contract
+            const accessStatusPromises = authorizedRequests.map(async (request) => {
+                if (request.patientId?.contractAddress) {
+                    try {
+                        const statusResponse = await fetchData(
+                            `${BACKEND_URL}/api/access-requests/doctor/access-status/${request.patientId.contractAddress}`
+                        );
+                        return {
+                            ...request,
+                            accessStatus: statusResponse.data
+                        };
+                    } catch (error) {
+                        console.error('Error fetching access status for patient:', request.patientId?.name);
+                        return {
+                            ...request,
+                            accessStatus: { error: error.message }
+                        };
+                    }
+                }
+                return request;
+            });
+
+            const accessData = await Promise.all(accessStatusPromises);
+            setAccessMonitoring(accessData);
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Error fetching access monitoring data');
+        }
+    };
+
+    // Request access extension
+    const requestExtension = async (accessRequestId, additionalTime, reason) => {
+        try {
+            const response = await fetchData(
+                `${BACKEND_URL}/api/access-requests/doctor/request-extension`,
+                'POST',
+                {
+                    accessRequestId,
+                    additionalTime, // in seconds
+                    reason
+                }
+            );
+
+            toast.success('Extension request submitted successfully');
+            
+            // Refresh authorized records and extension requests
+            if (activeTab === 'authorized') {
+                fetchAuthorizedRecords();
+            } else if (activeTab === 'extensions') {
+                fetchExtensionRequests();
+            }
+
+            return response.data;
+        } catch (error) {
+            console.error('Extension request error:', error);
+            toast.error(error.response?.data?.message || 'Error requesting extension');
+            throw error;
+        }
+    };
+
+
 
     // Request access to patient records
     const requestAccess = async (patientId, patientName) => {
@@ -230,44 +306,7 @@ const AuthorizedRecords = () => {
         }
     };
 
-    // Request access extension
-    const requestAccessExtension = async (patientId, patientName, currentRequestId) => {
-        if (!isConnected) {
-            toast.error('Please connect your wallet to request access extensions');
-            return;
-        }
 
-        setRequestLoading(true);
-        try {
-            const extensionReason = prompt(`Request access extension for ${patientName}.\n\nPlease provide a reason for the extension:`);
-            if (!extensionReason) {
-                setRequestLoading(false);
-                return;
-            }
-
-            const requestedDays = prompt('How many days would you like to extend access? (7-365 days):', '90');
-            if (!requestedDays || isNaN(requestedDays) || requestedDays < 7 || requestedDays > 365) {
-                toast.error('Please enter a valid number of days between 7-365');
-                setRequestLoading(false);
-                return;
-            }
-
-            await fetchData(`${BACKEND_URL}/api/access-requests/doctor/request-extension`, 'POST', {
-                patientId,
-                accessRequestId: currentRequestId,
-                extensionReason,
-                requestedExtension: parseInt(requestedDays)
-            });
-
-            toast.success('Access extension requested successfully!');
-            setActiveTab('extensions');
-            fetchExtensionRequests();
-        } catch (error) {
-            toast.error(error.response?.data?.message || 'Error requesting access extension');
-        } finally {
-            setRequestLoading(false);
-        }
-    };
 
     // View authorized record with comprehensive integrity verification and debugging
     const viewRecord = async (record) => {
@@ -394,7 +433,7 @@ const AuthorizedRecords = () => {
                             type: recordType,
                             hash: blockchainHashDirect
                         });
-                    } else {
+            } else {
                         console.log('⚠️ Record not found in approved records:', {
                             searchName: recordName,
                             searchType: recordType,
@@ -515,6 +554,40 @@ const AuthorizedRecords = () => {
         }
     };
 
+    // Handle extension request modal
+    const handleExtensionRequest = (record) => {
+        setSelectedRecordForExtension(record);
+        setExtensionFormData({
+            additionalDays: 30,
+            reason: `Need extended access to ${record.name} for continued medical consultation.`
+        });
+        setShowExtensionModal(true);
+    };
+
+    // Submit extension request
+    const submitExtensionRequest = async () => {
+        if (!selectedRecordForExtension) return;
+
+        try {
+            const additionalTimeInSeconds = extensionFormData.additionalDays * 24 * 60 * 60;
+            
+            await requestExtension(
+                selectedRecordForExtension.accessRequestId,
+                additionalTimeInSeconds,
+                extensionFormData.reason
+            );
+
+            setShowExtensionModal(false);
+            setSelectedRecordForExtension(null);
+            
+            // Refresh the authorized records
+            fetchAuthorizedRecords();
+            
+        } catch (error) {
+            console.error('Extension request submission failed:', error);
+        }
+    };
+
     // Check if access has expired or will expire soon
     const getAccessExpiryStatus = (expiresAt) => {
         const now = new Date();
@@ -621,6 +694,12 @@ const AuthorizedRecords = () => {
                     >
                         ⏰ Extension Requests ({extensionRequests.length})
                     </button>
+                    {/* <button 
+                        className={`tab-btn ${activeTab === 'monitoring' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('monitoring')}
+                    >
+                        👁️ Access Monitoring ({accessMonitoring.length})
+                    </button> */}
                 </div>
 
                 {/* Search Patients Tab */}
@@ -819,16 +898,16 @@ const AuthorizedRecords = () => {
                                             >
                                                 🔍 View & Verify Record
                                             </button>
-                                                {(expiryStatus.status === 'expiring' || expiryStatus.status === 'active') && (
-                                                    <button
-                                                        onClick={() => requestAccessExtension(record.patientId, record.patientName, record.accessRequestId)}
-                                                        disabled={requestLoading || !isConnected}
-                                                        className="extend-access-btn"
-                                                        title="Request access extension"
-                                                    >
-                                                        ⏰ Request Extension
-                                                    </button>
-                                                )}
+                                                                                            {(expiryStatus.status === 'expiring' || expiryStatus.status === 'active') && (
+                                                <button
+                                                    onClick={() => handleExtensionRequest(record)}
+                                                    disabled={requestLoading || !isConnected}
+                                                    className="extend-access-btn"
+                                                    title="Request access extension"
+                                                >
+                                                    ⏰ Request Extension
+                                                </button>
+                                            )}
                                                 {expiryStatus.status === 'expired' && (
                                                     <span className="expired-notice">
                                                         Access expired - request new access
@@ -1030,7 +1109,117 @@ const AuthorizedRecords = () => {
                         )}
                     </div>
                 )}
+
+                {/* Access Monitoring Tab */}
+                {activeTab === 'monitoring' && (
+                    <div className="monitoring-section">
+                        <h3>Access Monitoring</h3>
+                        <p className="section-description">
+                            View the current status of access granted to your patient contracts.
+                        </p>
+                        {accessMonitoring.length === 0 ? (
+                            <div className="no-monitoring-data">
+                                <p>No access monitoring data available.</p>
+                                <p>Please ensure your patient contracts are approved on the blockchain.</p>
             </div>
+                        ) : (
+                            <div className="monitoring-grid">
+                                {accessMonitoring.map(patient => (
+                                    <div key={patient._id} className="monitoring-item">
+                                        <h4>{patient.patientName}</h4>
+                                        <p><strong>Patient Email:</strong> {patient.patientEmail}</p>
+                                        <p><strong>Patient Contract:</strong> {patient.patientId?.contractAddress?.slice(0, 6)}...{patient.patientId?.contractAddress?.slice(-4)}</p>
+                                        <p><strong>Access Status:</strong> 
+                                            {patient.accessStatus?.error ? (
+                                                <span className="status-value error">Error: {patient.accessStatus.error}</span>
+                                            ) : (
+                                                <span className="status-value success">
+                                                    {patient.accessStatus.isAccessGranted ? 'Access Granted' : 'Access Denied'}
+                                                    {patient.accessStatus.expiresAt && ` (Expires: ${new Date(patient.accessStatus.expiresAt).toLocaleDateString()})`}
+                                                </span>
+                                            )
+                                        }
+                                        </p>
+                                        <p><strong>Last Updated:</strong> {new Date(patient.updatedAt).toLocaleDateString()}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Extension Request Modal */}
+            {showExtensionModal && selectedRecordForExtension && (
+                <div className="modal-overlay">
+                    <div className="modal-content extension-modal">
+                        <div className="modal-header">
+                            <h3>Request Access Extension</h3>
+                            <button 
+                                className="close-modal-btn"
+                                onClick={() => setShowExtensionModal(false)}
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="record-info">
+                                <h4>Record: {selectedRecordForExtension.name}</h4>
+                                <p><strong>Patient:</strong> {selectedRecordForExtension.patientName}</p>
+                                <p><strong>Current Expiry:</strong> {new Date(selectedRecordForExtension.accessExpiresAt).toLocaleDateString()}</p>
+                            </div>
+                            
+                            <div className="form-group">
+                                <label htmlFor="additionalDays">Additional Days:</label>
+                                <select
+                                    id="additionalDays"
+                                    value={extensionFormData.additionalDays}
+                                    onChange={(e) => setExtensionFormData({
+                                        ...extensionFormData,
+                                        additionalDays: parseInt(e.target.value)
+                                    })}
+                                >
+                                    <option value={7}>7 days</option>
+                                    <option value={14}>14 days</option>
+                                    <option value={30}>30 days</option>
+                                    <option value={60}>60 days</option>
+                                    <option value={90}>90 days</option>
+                                </select>
+                            </div>
+
+                            <div className="form-group">
+                                <label htmlFor="reason">Reason for Extension:</label>
+                                <textarea
+                                    id="reason"
+                                    value={extensionFormData.reason}
+                                    onChange={(e) => setExtensionFormData({
+                                        ...extensionFormData,
+                                        reason: e.target.value
+                                    })}
+                                    placeholder="Please explain why you need extended access..."
+                                    rows={4}
+                                />
+                            </div>
+                        </div>
+                        <div className="modal-actions">
+                            <button
+                                className="cancel-btn"
+                                onClick={() => setShowExtensionModal(false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                className="submit-btn"
+                                onClick={submitExtensionRequest}
+                                disabled={!extensionFormData.reason.trim()}
+                            >
+                                Submit Extension Request
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <Footer />
         </>
     );
