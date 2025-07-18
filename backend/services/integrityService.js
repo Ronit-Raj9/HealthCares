@@ -4,7 +4,7 @@ import MedicalRecord from '../models/medicalRecord.model.js';
 
 /**
  * Integrity Service for medical records
- * Provides functions to verify data integrity against blockchain
+ * Provides functions to verify data integrity against blockchain and database
  */
 
 /**
@@ -21,43 +21,66 @@ export const verifyRecordIntegrity = async (fileBuffer, recordId) => {
             throw new Error('Medical record not found');
         }
 
+        // Generate current hash of the file
+        const currentHash = generateFileHash(fileBuffer);
+
         // Verify against stored hash in database
         const isValidAgainstDB = verifyFileIntegrity(fileBuffer, record.dataHash);
         
-        let blockchainVerification = null;
+        let blockchainVerification = {
+            available: false,
+            verified: false,
+            hash: null,
+            error: null
+        };
 
         // If record is on blockchain, verify against on-chain hash
-        if (record.patientContractAddress && record.recordId_onchain !== null) {
+        if (record.patientContractAddress && record.name && record.recordType) {
             try {
-                const onChainRecords = await contractService.getApprovedRecords(
+                const blockchainHash = await contractService.getRecordHash(
                     record.patientContractAddress,
-                    // This would need the doctor's address - for now just verify against DB
+                    record.name,
+                    record.recordType
                 );
-                // Implementation would compare against specific on-chain record
-                blockchainVerification = {
-                    available: true,
-                    verified: isValidAgainstDB // Simplified for now
-                };
+
+                if (blockchainHash) {
+                    blockchainVerification = {
+                        available: true,
+                        verified: verifyFileIntegrity(fileBuffer, blockchainHash),
+                        hash: blockchainHash,
+                        error: null
+                    };
+                } else {
+                    blockchainVerification = {
+                        available: false,
+                        verified: false,
+                        hash: null,
+                        error: 'Blockchain hash not found'
+                    };
+                }
             } catch (error) {
                 blockchainVerification = {
                     available: false,
+                    verified: false,
+                    hash: null,
                     error: error.message
                 };
             }
         }
 
         return {
-            isValid: isValidAgainstDB,
+            isValid: isValidAgainstDB && (blockchainVerification.verified || !blockchainVerification.available),
             verifiedAgainstDatabase: isValidAgainstDB,
             databaseHash: record.dataHash,
-            computedHash: generateFileHash(fileBuffer),
+            computedHash: currentHash,
             blockchainVerification,
             recordInfo: {
                 id: record._id,
                 name: record.name,
                 type: record.recordType,
                 uploadedAt: record.uploadedAt,
-                isEncrypted: record.isEncrypted
+                isEncrypted: record.isEncrypted,
+                hasBlockchainRecord: !!(record.patientContractAddress && record.recordId_onchain !== null)
             }
         };
     } catch (error) {
@@ -105,17 +128,57 @@ export const getRecordIntegrityStatus = async (recordId) => {
             throw new Error('Medical record not found');
         }
 
+        let blockchainHashStatus = {
+            available: false,
+            hash: null,
+            error: null
+        };
+
+        // Check if blockchain hash is available
+        if (record.patientContractAddress && record.name && record.recordType) {
+            try {
+                const blockchainHash = await contractService.getRecordHash(
+                    record.patientContractAddress,
+                    record.name,
+                    record.recordType
+                );
+
+                if (blockchainHash) {
+                    blockchainHashStatus = {
+                        available: true,
+                        hash: blockchainHash,
+                        error: null
+                    };
+                } else {
+                    blockchainHashStatus = {
+                        available: false,
+                        hash: null,
+                        error: 'Hash not found on blockchain'
+                    };
+                }
+            } catch (error) {
+                blockchainHashStatus = {
+                    available: false,
+                    hash: null,
+                    error: error.message
+                };
+            }
+        }
+
         return {
             recordId,
             hasIntegrityHash: !!record.dataHash,
+            databaseHash: record.dataHash,
             isEncrypted: record.isEncrypted,
             onChainInfo: {
                 hasOnChainRecord: !!(record.patientContractAddress && record.recordId_onchain !== null),
                 contractAddress: record.patientContractAddress,
                 onChainId: record.recordId_onchain
             },
+            blockchainHashStatus,
             uploadedAt: record.uploadedAt,
-            recordType: record.recordType
+            recordType: record.recordType,
+            recordName: record.name
         };
     } catch (error) {
         throw new Error(`Failed to get integrity status: ${error.message}`);
@@ -144,9 +207,92 @@ export const generateIntegrityReport = (fileBuffer, expectedHash, additionalInfo
     };
 };
 
+/**
+ * Compare database and blockchain hashes for a record
+ * @param {string} recordId - Medical record ID
+ * @returns {Object} - Hash comparison result
+ */
+export const compareHashes = async (recordId) => {
+    try {
+        const record = await MedicalRecord.findById(recordId);
+        if (!record) {
+            throw new Error('Medical record not found');
+        }
+
+        let blockchainHash = null;
+        let blockchainError = null;
+
+        if (record.patientContractAddress && record.name && record.recordType) {
+            try {
+                blockchainHash = await contractService.getRecordHash(
+                    record.patientContractAddress,
+                    record.name,
+                    record.recordType
+                );
+            } catch (error) {
+                blockchainError = error.message;
+            }
+        }
+
+        const hashesMatch = blockchainHash && record.dataHash && (blockchainHash === record.dataHash);
+
+        return {
+            recordId,
+            databaseHash: record.dataHash,
+            blockchainHash,
+            hashesMatch,
+            blockchainAvailable: !!blockchainHash,
+            blockchainError,
+            comparisonTimestamp: new Date().toISOString()
+        };
+    } catch (error) {
+        throw new Error(`Hash comparison failed: ${error.message}`);
+    }
+};
+
+/**
+ * Get all records with integrity verification status for a patient
+ * @param {string} patientId - Patient ID
+ * @returns {Array} - Array of records with integrity status
+ */
+export const getPatientRecordsIntegrityStatus = async (patientId) => {
+    try {
+        const records = await MedicalRecord.find({ patientId });
+        
+        const integrityStatuses = await Promise.all(
+            records.map(async (record) => {
+                try {
+                    const status = await getRecordIntegrityStatus(record._id);
+                    return {
+                        recordId: record._id,
+                        recordName: record.name,
+                        recordType: record.recordType,
+                        uploadedAt: record.uploadedAt,
+                        ...status
+                    };
+                } catch (error) {
+                    return {
+                        recordId: record._id,
+                        recordName: record.name,
+                        recordType: record.recordType,
+                        uploadedAt: record.uploadedAt,
+                        error: error.message
+                    };
+                }
+            })
+        );
+
+        return integrityStatuses;
+    } catch (error) {
+        throw new Error(`Failed to get patient records integrity status: ${error.message}`);
+    }
+};
+
 export default {
     verifyRecordIntegrity,
     batchVerifyIntegrity,
     getRecordIntegrityStatus,
-    generateIntegrityReport
+    generateIntegrityReport,
+    compareHashes,
+    getPatientRecordsIntegrityStatus
 }; 

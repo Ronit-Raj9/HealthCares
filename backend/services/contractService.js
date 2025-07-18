@@ -207,7 +207,7 @@ class ContractService {
      * @param {string} recordType - 'bill', 'prescription', or 'report'
      * @param {string} recordName - Name of the record
      * @param {string} dataHash - SHA-256 hash of the original file
-     * @returns {Object} - {recordId, transactionHash}
+     * @returns {Object} - {recordId, transactionHash, blockNumber, gasUsed}
      */
     async addRecord(contractAddress, recordType, recordName, dataHash) {
         await this.ensureInitialized();
@@ -270,14 +270,13 @@ class ContractService {
                 recordId = parsedEvent.args[2]; // prescriptionId is the third parameter  
             } else if (recordType.toLowerCase() === 'report') {
                 recordId = parsedEvent.args[2]; // reportId is the third parameter
-            } else {
-                recordId = parsedEvent.args.recordId;
             }
 
             return {
                 recordId: recordId.toString(),
                 transactionHash: tx.hash,
-                blockNumber: receipt.blockNumber
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null
             };
         } catch (error) {
             console.error('Error adding record to blockchain:', error);
@@ -289,12 +288,13 @@ class ContractService {
      * Grant access to a doctor for specific records
      * @param {string} contractAddress - Patient's contract address
      * @param {string} doctorAddress - Doctor's wallet address
-     * @param {Array} recordIds - Array of record IDs
-     * @param {string} recordType - Type of records
-     * @param {number} duration - Access duration in days
+     * @param {number} expiryDuration - Access duration in seconds
+     * @param {Array} prescriptionIds - Array of prescription IDs
+     * @param {Array} reportIds - Array of report IDs
+     * @param {Array} billIds - Array of bill IDs
      * @returns {Object} - Transaction details
      */
-    async grantAccess(contractAddress, doctorAddress, recordIds, recordType, duration) {
+    async grantAccess(contractAddress, doctorAddress, expiryDuration, prescriptionIds = [], reportIds = [], billIds = []) {
         await this.ensureInitialized();
         
         const contract = await this.connectToPatientContract(contractAddress);
@@ -302,16 +302,18 @@ class ContractService {
         try {
             const tx = await contract.approveAccess(
                 doctorAddress,
-                recordIds,
-                recordType.toLowerCase(),
-                duration
+                expiryDuration,
+                prescriptionIds,
+                reportIds,
+                billIds
             );
 
             const receipt = await tx.wait();
 
             return {
                 transactionHash: tx.hash,
-                blockNumber: receipt.blockNumber
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null
             };
         } catch (error) {
             console.error('Error granting access:', error);
@@ -328,15 +330,21 @@ class ContractService {
     async getApprovedRecords(contractAddress, doctorAddress) {
         await this.ensureInitialized();
         
-        const contract = await this.connectToPatientContract(contractAddress);
+        // Create contract instance with doctor's address as signer
+        const doctorWallet = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
+        const contract = new ethers.Contract(
+            contractAddress,
+            this.healthRecordABI,
+            doctorWallet
+        );
         
         try {
-            const result = await contract.getApprovedRecords(doctorAddress);
+            const result = await contract.getApprovedRecords();
             
             return {
-                bills: result.bills || [],
-                prescriptions: result.prescriptions || [],
-                reports: result.reports || []
+                prescriptions: result[0] || [], // approvedPrescriptions
+                reports: result[1] || [],       // approvedReports  
+                bills: result[2] || []          // approvedBills
             };
         } catch (error) {
             console.error('Error getting approved records:', error);
@@ -345,27 +353,533 @@ class ContractService {
     }
 
     /**
-     * Fallback ABI for HealthRecord contract
+     * Get a specific record hash by name and type
+     * @param {string} contractAddress - Patient's contract address  
+     * @param {string} recordName - Name of the record
+     * @param {string} recordType - Type of record (bill, prescription, report)
+     * @returns {string} - Data hash from blockchain
      */
-    getFallbackHealthRecordABI() {
-        return [
-            "function addBill(string memory billName, string memory billDataHash) public",
-            "function addPrescription(string memory prescriptionName, string memory prescriptionDataHash) public",
-            "function addReport(string memory reportName, string memory reportDataHash) public",
-            "function approveAccess(address requester, uint256[] memory recordIds, string memory recordType, uint256 duration) public",
-            "function getApprovedRecords(address requester) public view returns (tuple(string name, string dataHash)[] bills, tuple(string name, string dataHash)[] prescriptions, tuple(string name, string dataHash)[] reports)",
-            "event BillAdded(uint256 indexed patientId, string indexed billName, uint256 billId)",
-            "event PrescriptionAdded(uint256 indexed patientId, string indexed prescriptionName, uint256 prescriptionId)",
-            "event ReportAdded(uint256 indexed patientId, string indexed reportName, uint256 reportId)"
-        ];
+    async getRecordHash(contractAddress, recordName, recordType) {
+        await this.ensureInitialized();
+        
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            let record;
+            switch (recordType.toLowerCase()) {
+                case 'bill':
+                    record = await contract.getBill(recordName);
+                    return record.billDataHash;
+                case 'prescription':
+                    record = await contract.getPrescription(recordName);
+                    return record.prescriptionDataHash;
+                case 'report':
+                    record = await contract.getReport(recordName);
+                    return record.reportDataHash;
+                default:
+                    throw new Error(`Invalid record type: ${recordType}`);
+            }
+        } catch (error) {
+            console.error('Error getting record hash:', error);
+            throw error;
+        }
+    }
+
+    // ========================================
+    // PATIENT PROFILE UPDATE FUNCTIONS
+    // ========================================
+
+    /**
+     * Update patient's name on blockchain
+     * @param {string} contractAddress - Patient's contract address
+     * @param {string} newName - New name to update
+     * @returns {Object} - Transaction details
+     */
+    async updatePatientName(contractAddress, newName) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.updatePatientName(newName);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'updatePatientName'
+            };
+        } catch (error) {
+            console.error('Error updating patient name:', error);
+            throw error;
+        }
     }
 
     /**
-     * Fallback ABI for Factory contract
+     * Update patient's age on blockchain
+     * @param {string} contractAddress - Patient's contract address  
+     * @param {number} newAge - New age to update
+     * @returns {Object} - Transaction details
+     */
+    async updatePatientAge(contractAddress, newAge) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.updatePatientAge(newAge);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'updatePatientAge'
+            };
+        } catch (error) {
+            console.error('Error updating patient age:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update patient's gender on blockchain
+     * @param {string} contractAddress - Patient's contract address
+     * @param {string} newGender - New gender to update
+     * @returns {Object} - Transaction details
+     */
+    async updatePatientGender(contractAddress, newGender) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.updatePatientGender(newGender);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'updatePatientGender'
+            };
+        } catch (error) {
+            console.error('Error updating patient gender:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update patient's height on blockchain
+     * @param {string} contractAddress - Patient's contract address
+     * @param {number} newHeight - New height in centimeters
+     * @returns {Object} - Transaction details
+     */
+    async updatePatientHeight(contractAddress, newHeight) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.updatePatientHeight(newHeight);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'updatePatientHeight'
+            };
+        } catch (error) {
+            console.error('Error updating patient height:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update patient's weight on blockchain
+     * @param {string} contractAddress - Patient's contract address
+     * @param {number} newWeight - New weight in kilograms
+     * @returns {Object} - Transaction details
+     */
+    async updatePatientWeight(contractAddress, newWeight) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.updatePatientWeight(newWeight);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'updatePatientWeight'
+            };
+        } catch (error) {
+            console.error('Error updating patient weight:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update patient's blood group on blockchain
+     * @param {string} contractAddress - Patient's contract address
+     * @param {string} newBloodGroup - New blood group
+     * @returns {Object} - Transaction details
+     */
+    async updatePatientBloodGroup(contractAddress, newBloodGroup) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.updatePatientBloodGroup(newBloodGroup);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'updatePatientBloodGroup'
+            };
+        } catch (error) {
+            console.error('Error updating patient blood group:', error);
+            throw error;
+        }
+    }
+
+    // ========================================
+    // ACCESS EXTENSION FUNCTIONS
+    // ========================================
+
+    /**
+     * Request access extension from doctor side
+     * @param {string} contractAddress - Patient's contract address
+     * @param {number} additionalTime - Additional time in seconds
+     * @returns {Object} - Transaction details
+     */
+    async requestExtendAccess(contractAddress, additionalTime) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.requestExtendAccess(additionalTime);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'requestExtendAccess'
+            };
+        } catch (error) {
+            console.error('Error requesting access extension:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Approve access extension from patient side
+     * @param {string} contractAddress - Patient's contract address
+     * @param {string} doctorAddress - Doctor's wallet address
+     * @returns {Object} - Transaction details
+     */
+    async approveExtendAccess(contractAddress, doctorAddress) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.approveExtendAccess(doctorAddress);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'approveExtendAccess'
+            };
+        } catch (error) {
+            console.error('Error approving access extension:', error);
+            throw error;
+        }
+    }
+
+    // ========================================
+    // ACCESS REVOCATION FUNCTIONS
+    // ========================================
+
+    /**
+     * Revoke access for a doctor
+     * @param {string} contractAddress - Patient's contract address
+     * @param {string} doctorAddress - Doctor's wallet address to revoke
+     * @returns {Object} - Transaction details
+     */
+    async revokeAccess(contractAddress, doctorAddress) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const tx = await contract.revokeAccess(doctorAddress);
+            const receipt = await tx.wait();
+            
+            return {
+                transactionHash: tx.hash,
+                blockNumber: receipt.blockNumber,
+                gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : null,
+                contractFunction: 'revokeAccess'
+            };
+        } catch (error) {
+            console.error('Error revoking access:', error);
+            throw error;
+        }
+    }
+
+    // ========================================
+    // UTILITY VIEW FUNCTIONS
+    // ========================================
+
+    /**
+     * Get patient details from blockchain
+     * @param {string} contractAddress - Patient's contract address
+     * @returns {Object} - Patient details from blockchain
+     */
+    async getPatientDetails(contractAddress) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const details = await contract.getPatientDetails();
+            
+            return {
+                name: details[0],
+                age: Number(details[1]),
+                gender: details[2],
+                height: Number(details[3]),
+                weight: Number(details[4]),
+                bloodGroup: details[5]
+            };
+        } catch (error) {
+            console.error('Error getting patient details:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get patient ID from blockchain
+     * @param {string} contractAddress - Patient's contract address
+     * @returns {number} - Patient ID
+     */
+    async getPatientId(contractAddress) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const patientId = await contract.getPatientId();
+            return Number(patientId);
+        } catch (error) {
+            console.error('Error getting patient ID:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Check if doctor's access has expired
+     * @param {string} contractAddress - Patient's contract address
+     * @param {string} doctorAddress - Doctor's wallet address
+     * @returns {boolean} - True if access expired
+     */
+    async hasAccessExpired(contractAddress, doctorAddress) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            // Connect as doctor to check their access
+            const provider = new ethers.JsonRpcProvider(process.env.ETHEREUM_RPC_URL);
+            const doctorWallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+            const doctorContract = new ethers.Contract(contractAddress, this.healthRecordABI, doctorWallet);
+            
+            const hasExpired = await doctorContract.hasAccessExpired();
+            return hasExpired;
+        } catch (error) {
+            console.error('Error checking access expiry:', error);
+            return true; // Assume expired on error
+        }
+    }
+
+    /**
+     * Check extension request status
+     * @param {string} contractAddress - Patient's contract address
+     * @param {string} doctorAddress - Doctor's wallet address
+     * @returns {Object} - Extension request details
+     */
+    async checkExtensionRequest(contractAddress, doctorAddress) {
+        await this.ensureInitialized();
+        const contract = await this.connectToPatientContract(contractAddress);
+        
+        try {
+            const extensionInfo = await contract.checkExtensionRequest(doctorAddress);
+            
+            return {
+                exists: extensionInfo[0],
+                additionalTime: Number(extensionInfo[1]),
+                requestTime: Number(extensionInfo[2])
+            };
+        } catch (error) {
+            console.error('Error checking extension request:', error);
+            throw error;
+        }
+    }
+
+    // ========================================
+    // FACTORY UTILITY FUNCTIONS  
+    // ========================================
+
+    /**
+     * Get contract address by patient ID
+     * @param {number} patientId - Patient's ID
+     * @returns {string} - Contract address
+     */
+    async getContractByPatientId(patientId) {
+        await this.ensureInitialized();
+        
+        if (!this.factoryContract) {
+            throw new Error('Factory contract not available');
+        }
+        
+        try {
+            const contractAddress = await this.factoryContract.getContractByPatientId(patientId);
+            return contractAddress;
+        } catch (error) {
+            console.error('Error getting contract by patient ID:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get patient ID by address
+     * @param {string} patientAddress - Patient's wallet address
+     * @returns {number} - Patient ID
+     */
+    async getPatientIdByAddress(patientAddress) {
+        await this.ensureInitialized();
+        
+        if (!this.factoryContract) {
+            throw new Error('Factory contract not available');
+        }
+        
+        try {
+            const patientId = await this.factoryContract.getPatientIdByAddress(patientAddress);
+            return Number(patientId);
+        } catch (error) {
+            console.error('Error getting patient ID by address:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get all patient IDs registered in the system
+     * @returns {Array} - Array of patient IDs
+     */
+    async getAllPatientIds() {
+        await this.ensureInitialized();
+        
+        if (!this.factoryContract) {
+            throw new Error('Factory contract not available');
+        }
+        
+        try {
+            const patientIds = await this.factoryContract.getAllPatientIds();
+            return patientIds.map(id => Number(id));
+        } catch (error) {
+            console.error('Error getting all patient IDs:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get total number of patients in the system
+     * @returns {number} - Total patient count
+     */
+    async getPatientCount() {
+        await this.ensureInitialized();
+        
+        if (!this.factoryContract) {
+            throw new Error('Factory contract not available');
+        }
+        
+        try {
+            const count = await this.factoryContract.getPatientCount();
+            return Number(count);
+        } catch (error) {
+            console.error('Error getting patient count:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Fallback ABI for HealthRecord contract - COMPLETE ABI with ALL functions
+     */
+    getFallbackHealthRecordABI() {
+        return [
+            // Record Management Functions
+            "function addBill(string memory billName, string memory dataHash) external",
+            "function addPrescription(string memory prescriptionName, string memory dataHash) external", 
+            "function addReport(string memory reportName, string memory dataHash) external",
+            
+            // Patient Profile Update Functions
+            "function updatePatientName(string memory updatedName) external",
+            "function updatePatientAge(uint256 updatedAge) external",
+            "function updatePatientGender(string memory updatedGender) external",
+            "function updatePatientHeight(uint256 updatedHeight) external",
+            "function updatePatientWeight(uint256 updatedWeight) external",
+            "function updatePatientBloodGroup(string memory updatedBloodGroup) external",
+            
+            // Access Control Functions
+            "function requestAccess() external",
+            "function approveAccess(address requester, uint256 expiryDuration, uint256[] calldata prescriptionIds, uint256[] calldata reportIds, uint256[] calldata billIds) external",
+            "function revokeAccess(address requester) external",
+            
+            // Access Extension Functions
+            "function requestExtendAccess(uint256 additionalTime) external",
+            "function approveExtendAccess(address requester) external",
+            
+            // View/Getter Functions
+            "function getApprovedRecords() external view returns (tuple(string prescriptionName, string prescriptionDataHash)[] approvedPrescriptions, tuple(string reportName, string reportDataHash)[] approvedReports, tuple(string billName, string billDataHash)[] approvedBills)",
+            "function getBill(string memory billName) external view returns (tuple(string billName, string billDataHash))",
+            "function getPrescription(string memory prescriptionName) external view returns (tuple(string prescriptionName, string prescriptionDataHash))",
+            "function getReport(string memory reportName) external view returns (tuple(string reportName, string reportDataHash))",
+            "function getPatientDetails() external view returns (string memory name, uint256 age, string memory gender, uint256 height, uint256 weight, string memory bloodGroup)",
+            "function getPatientId() external view returns (uint256)",
+            "function hasAccessExpired() external view returns (bool)",
+            "function checkExtensionRequest(address requester) external view returns (bool exists, uint256 additionalTime, uint256 requestTime)",
+            
+            // Events
+            "event BillAdded(uint256 indexed patientId, string indexed billName, uint256 billId)",
+            "event PrescriptionAdded(uint256 indexed patientId, string indexed prescriptionName, uint256 prescriptionId)",
+            "event ReportAdded(uint256 indexed patientId, string indexed reportName, uint256 reportId)",
+            "event PatientNameUpdated(uint256 indexed patientId, string indexed newName)",
+            "event PatientAgeUpdated(uint256 indexed patientId, uint256 indexed newAge)",
+            "event PatientGenderUpdated(uint256 indexed patientId, string indexed newGender)",
+            "event PatientHeightUpdated(uint256 indexed patientId, uint256 indexed newHeight)",
+            "event PatientWeightUpdated(uint256 indexed patientId, uint256 indexed newWeight)",
+            "event PatientBloodGroupUpdated(uint256 indexed patientId, string indexed newBloodGroup)",
+            "event AccessRequested(address indexed requester, uint256 timestamp)",
+            "event AccessApproved(address indexed requester, uint256 timestamp)",
+            "event AccessRevoked(address indexed requester, uint256 timestamp)",
+            "event ExtensionRequested(address indexed requester, uint256 additionalTime, uint256 timestamp)",
+            "event ExtensionApproved(address indexed requester, uint256 newExpiryTime)"
+        ];
+    }
+
+
+
+    /**
+     * Fallback ABI for Factory contract - COMPLETE with utility functions
      */
     getFallbackFactoryABI() {
         return [
             "function createHealthRecord(string memory name, uint256 id, uint256 age, string memory gender, uint256 height, uint256 weight, string memory bloodGroup) public returns (address)",
+            "function getContractByPatientId(uint256 patientId) external view returns (address)",
+            "function getPatientIdByAddress(address patient) external view returns (uint256)",
+            "function getAllPatientIds() external view returns (uint256[] memory)",
+            "function getPatientCount() external view returns (uint256)",
             "event HealthRecordCreated(uint256 indexed patientId, address indexed patientAddress, address indexed contractAddress)"
         ];
     }

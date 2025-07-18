@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
-import { toast } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 import fetchData from '../helper/authApi';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';

@@ -3,11 +3,10 @@ import { useParams } from 'react-router-dom';
 import fetchData from '../helper/authApi';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
-import { toast } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 import { useAccount, useSignMessage } from 'wagmi';
 import '../styles/recorddetail.css';
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+import { ENCRYPTION_KEY_MESSAGE, BACKEND_URL } from '../utils/constants';
 
 const RecordDetail = () => {
   const { id } = useParams();
@@ -15,6 +14,10 @@ const RecordDetail = () => {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [integrityStatus, setIntegrityStatus] = useState(null);
+  const [verifyingIntegrity, setVerifyingIntegrity] = useState(false);
+  const [integrityResult, setIntegrityResult] = useState(null);
+  const [blockchainVerificationResult, setBlockchainVerificationResult] = useState(null);
+  const [showAdvancedVerification, setShowAdvancedVerification] = useState(false);
   
   const { isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
@@ -39,6 +42,99 @@ const RecordDetail = () => {
     }
   };
 
+  const verifyIntegrity = async () => {
+    if (!record?.ipfsHash) return;
+    
+    if (record.isEncrypted && !isConnected) {
+      return toast.error('Please connect your wallet to verify encrypted records');
+    }
+    
+    setVerifyingIntegrity(true);
+    setIntegrityStatus('🔍 Verifying record integrity...');
+    
+    try {
+      let url = `${BACKEND_URL}/api/medical-records/verify/${record.ipfsHash}`;
+      const token = localStorage.getItem('token');
+      
+      // For encrypted records, generate wallet signature
+      if (record.isEncrypted) {
+        setIntegrityStatus('🔑 Generating verification key from your wallet...');
+        const message = ENCRYPTION_KEY_MESSAGE;
+        const signature = await signMessageAsync({ message });
+        url += `?walletSignature=${encodeURIComponent(signature)}`;
+      }
+      
+      setIntegrityStatus('🔍 Performing integrity verification...');
+      
+      const response = await fetch(url, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+        }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Verification failed');
+      }
+      
+      const result = await response.json();
+      setIntegrityResult(result.data);
+      
+      if (result.data.overallIntegrityValid) {
+        setIntegrityStatus('✅ Integrity verification completed successfully');
+        toast.success('✅ Record integrity verified successfully');
+      } else {
+        setIntegrityStatus('❌ Integrity verification failed');
+        toast.error('❌ Record integrity verification failed');
+      }
+      
+    } catch (error) {
+      console.error('Verification error:', error);
+      toast.error(error.message || 'Error verifying record integrity');
+      setIntegrityStatus('❌ Verification failed');
+    } finally {
+      setVerifyingIntegrity(false);
+      setTimeout(() => setIntegrityStatus(null), 5000);
+    }
+  };
+
+  const performAdvancedBlockchainVerification = async () => {
+    if (!record?.recordId_onchain) {
+      toast.error('This record is not stored on blockchain');
+      return;
+    }
+
+    if (!isConnected) {
+      toast.error('Please connect your wallet for blockchain verification');
+      return;
+    }
+
+    setVerifyingIntegrity(true);
+    setIntegrityStatus('🔗 Performing advanced blockchain verification...');
+
+    try {
+      const response = await fetchData(`${BACKEND_URL}/api/medical-records/verify-blockchain/${record._id}`);
+      setBlockchainVerificationResult(response.data);
+      
+      if (response.data.isValid) {
+        setIntegrityStatus('✅ Advanced blockchain verification completed successfully');
+        toast.success('✅ Advanced blockchain verification passed');
+      } else {
+        setIntegrityStatus('❌ Advanced blockchain verification failed');
+        toast.error('❌ Advanced blockchain verification failed');
+      }
+      
+      setShowAdvancedVerification(true);
+    } catch (error) {
+      console.error('Advanced verification error:', error);
+      toast.error('Error performing advanced blockchain verification');
+      setIntegrityStatus('❌ Advanced verification failed');
+    } finally {
+      setVerifyingIntegrity(false);
+      setTimeout(() => setIntegrityStatus(null), 5000);
+    }
+  };
+
   const handleDownload = async () => {
     if (!record?.ipfsHash) return;
     
@@ -56,7 +152,7 @@ const RecordDetail = () => {
       // For encrypted records, generate wallet signature
       if (record.isEncrypted) {
         setIntegrityStatus('🔑 Generating decryption key from your wallet...');
-        const message = "Login and generate my HealthRecord key";
+        const message = ENCRYPTION_KEY_MESSAGE;
         const signature = await signMessageAsync({ message });
         url += `?walletSignature=${encodeURIComponent(signature)}`;
       }
@@ -74,11 +170,24 @@ const RecordDetail = () => {
         throw new Error(errorText || 'Download failed');
       }
       
-      // Check if integrity was verified
+      // Check if integrity was verified during download
       const integrityVerified = response.headers.get('X-Integrity-Verified');
+      const localHashVerified = response.headers.get('X-Local-Hash-Verified');
+      const blockchainHashVerified = response.headers.get('X-Blockchain-Hash-Verified');
+      const blockchainMessage = response.headers.get('X-Blockchain-Message');
+      
       if (integrityVerified === 'true') {
-        setIntegrityStatus('✅ File integrity verified');
-        toast.success('File integrity verified successfully');
+        setIntegrityStatus('✅ File integrity verified during download');
+        toast.success(`✅ File integrity verified\n🔐 Local hash: ${localHashVerified === 'true' ? 'Valid' : 'Invalid'}\n⛓️ Blockchain: ${blockchainMessage || 'Not available'}`);
+      } else {
+        setIntegrityStatus('⚠️ Integrity verification partial or failed');
+        toast(`⚠️ Integrity check results:\n🔐 Local hash: ${localHashVerified === 'true' ? 'Valid' : 'Invalid'}\n⛓️ Blockchain: ${blockchainMessage || 'Not available'}`, {
+          icon: '⚠️',
+          style: {
+            borderLeft: '4px solid #f59e0b',
+            backgroundColor: '#fef3c7'
+          }
+        });
       }
       
       const blob = await response.blob();
@@ -130,6 +239,148 @@ const RecordDetail = () => {
     return null;
   };
 
+  const renderIntegrityResults = () => {
+    if (!integrityResult) return null;
+
+    return (
+      <div className="integrity-results">
+        <h4>🔍 Integrity Verification Results</h4>
+        <div className="verification-summary">
+          <div className={`verification-status ${integrityResult.overallIntegrityValid ? 'success' : 'error'}`}>
+            <h5>{integrityResult.overallIntegrityValid ? '✅ Verification Passed' : '❌ Verification Failed'}</h5>
+            <p>{integrityResult.overallIntegrityValid ? 'Record integrity is valid' : 'Record integrity check failed'}</p>
+          </div>
+        </div>
+        
+        <div className="verification-grid">
+          <div className="verification-item">
+            <span className="verification-label">Local Hash:</span>
+            <span className={`verification-value ${integrityResult.localIntegrityValid ? 'success' : 'error'}`}>
+              {integrityResult.localIntegrityValid ? '✅ Valid' : '❌ Invalid'}
+            </span>
+          </div>
+          <div className="verification-item">
+            <span className="verification-label">Blockchain Hash:</span>
+            <span className={`verification-value ${integrityResult.blockchainVerification.verified ? 'success' : 'warning'}`}>
+              {integrityResult.blockchainVerification.available ? 
+                (integrityResult.blockchainVerification.verified ? '✅ Verified' : '❌ Mismatch') : 
+                '⚠️ Not Available'
+              }
+            </span>
+          </div>
+        </div>
+        
+        <div className="hash-details">
+          <div className="hash-section">
+            <h6>Hash Comparison</h6>
+            <div className="hash-item">
+              <span className="hash-label">Current Hash:</span>
+              <code className="hash-value">{integrityResult.currentHash}</code>
+            </div>
+            <div className="hash-item">
+              <span className="hash-label">Database Hash:</span>
+              <code className="hash-value">{integrityResult.databaseHash}</code>
+            </div>
+            {integrityResult.blockchainVerification.hash && (
+              <div className="hash-item">
+                <span className="hash-label">Blockchain Hash:</span>
+                <code className="hash-value">{integrityResult.blockchainVerification.hash}</code>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        {integrityResult.blockchainVerification.message && (
+          <div className="blockchain-message">
+            <h6>Blockchain Status</h6>
+            <p>{integrityResult.blockchainVerification.message}</p>
+          </div>
+        )}
+        
+        <p className="verification-timestamp">
+          <small>Verified at: {integrityResult.verifiedAt}</small>
+        </p>
+      </div>
+    );
+  };
+
+  const renderAdvancedBlockchainVerification = () => {
+    if (!blockchainVerificationResult) return null;
+
+    return (
+      <div className="advanced-blockchain-verification">
+        <h4>🔗 Advanced Blockchain Verification Results</h4>
+        <div className="verification-summary">
+          <div className={`verification-status ${blockchainVerificationResult.isValid ? 'success' : 'error'}`}>
+            <h5>{blockchainVerificationResult.isValid ? '✅ Blockchain Verification Passed' : '❌ Blockchain Verification Failed'}</h5>
+            <p>{blockchainVerificationResult.message}</p>
+          </div>
+        </div>
+
+        <div className="blockchain-details">
+          <div className="detail-section">
+            <h6>Contract Information</h6>
+            <div className="detail-item">
+              <span>Contract Address:</span>
+              <code>{blockchainVerificationResult.contractAddress}</code>
+            </div>
+            <div className="detail-item">
+              <span>Record ID on Chain:</span>
+              <span>{blockchainVerificationResult.recordIdOnChain}</span>
+            </div>
+            <div className="detail-item">
+              <span>Block Number:</span>
+              <span>{blockchainVerificationResult.blockNumber}</span>
+            </div>
+          </div>
+
+          <div className="detail-section">
+            <h6>Verification Details</h6>
+            <div className="detail-item">
+              <span>Hash Match:</span>
+              <span className={blockchainVerificationResult.hashMatch ? 'success' : 'error'}>
+                {blockchainVerificationResult.hashMatch ? '✅ Matches' : '❌ Mismatch'}
+              </span>
+            </div>
+            <div className="detail-item">
+              <span>Record Exists on Chain:</span>
+              <span className={blockchainVerificationResult.recordExists ? 'success' : 'error'}>
+                {blockchainVerificationResult.recordExists ? '✅ Yes' : '❌ No'}
+              </span>
+            </div>
+            <div className="detail-item">
+              <span>Timestamp Match:</span>
+              <span className={blockchainVerificationResult.timestampMatch ? 'success' : 'warning'}>
+                {blockchainVerificationResult.timestampMatch ? '✅ Matches' : '⚠️ Different'}
+              </span>
+            </div>
+          </div>
+
+          {blockchainVerificationResult.transactionHash && (
+            <div className="detail-section">
+              <h6>Transaction Information</h6>
+              <div className="detail-item">
+                <span>Transaction Hash:</span>
+                <a 
+                  href={`https://sepolia.etherscan.io/tx/${blockchainVerificationResult.transactionHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="transaction-link"
+                >
+                  {blockchainVerificationResult.transactionHash}
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <p className="verification-timestamp">
+          <small>Advanced verification performed at: {new Date().toLocaleString()}</small>
+        </p>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <>
@@ -179,6 +430,11 @@ const RecordDetail = () => {
                 {record.recordId_onchain && (
                   <span className="badge blockchain">⛓️ On-Chain</span>
                 )}
+                {record.dataHash && record.blockchainHash && (
+                  <span className={`badge hash-status ${record.dataHash === record.blockchainHash ? 'verified' : 'mismatch'}`}>
+                    {record.dataHash === record.blockchainHash ? '✅ Hash Verified' : '⚠️ Hash Mismatch'}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -217,11 +473,48 @@ const RecordDetail = () => {
                 </div>
               )}
               
+              {record.dataHash && (
+                <div className="info-group">
+                  <span className="info-label">Data Hash (SHA-256)</span>
+                  <span className="info-value"><code style={{fontSize: '0.8rem', wordBreak: 'break-all'}}>{record.dataHash}</code></span>
+                </div>
+              )}
+              
+              {record.blockchainHash && (
+                <div className="info-group">
+                  <span className="info-label">Blockchain Hash</span>
+                  <span className="info-value"><code style={{fontSize: '0.8rem', wordBreak: 'break-all'}}>{record.blockchainHash}</code></span>
+                </div>
+              )}
+              
               <div className="info-group">
                 <span className="info-label">Authorized Users</span>
                 <span className="info-value">{record.authorizedUsers?.length || 0}</span>
               </div>
             </div>
+
+            {/* Hash Comparison Section */}
+            {record.dataHash && record.blockchainHash && (
+              <div className="hash-comparison-section">
+                <h4>🔍 Hash Verification</h4>
+                <div className="hash-comparison">
+                  <div className="hash-item">
+                    <span className="hash-label">Local Hash:</span>
+                    <code className="hash-value">{record.dataHash}</code>
+                  </div>
+                  <div className="hash-item">
+                    <span className="hash-label">Blockchain Hash:</span>
+                    <code className="hash-value">{record.blockchainHash}</code>
+                  </div>
+                  <div className="hash-match">
+                    <span className="hash-label">Verification:</span>
+                    <span className={`hash-match-status ${record.dataHash === record.blockchainHash ? 'success' : 'error'}`}>
+                      {record.dataHash === record.blockchainHash ? '✅ Hashes Match - File Integrity Verified' : '❌ Hash Mismatch - File May Be Corrupted'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Wallet Connection Status for Encrypted Records */}
             {record.isEncrypted && (
@@ -246,6 +539,12 @@ const RecordDetail = () => {
               </div>
             )}
 
+            {/* Integrity Verification Results */}
+            {renderIntegrityResults()}
+
+            {/* Advanced Blockchain Verification Results */}
+            {showAdvancedVerification && renderAdvancedBlockchainVerification()}
+
             {/* Blockchain Info */}
             {record.blockchainTransactions?.upload && (
               <div className="blockchain-info">
@@ -269,6 +568,12 @@ const RecordDetail = () => {
                     <span className="info-value">{record.blockchainTransactions.upload.blockNumber}</span>
                   </div>
                 )}
+                {record.blockchainTransactions.upload.gasUsed && (
+                  <div className="info-group">
+                    <span className="info-label">Gas Used</span>
+                    <span className="info-value">{record.blockchainTransactions.upload.gasUsed}</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -285,11 +590,29 @@ const RecordDetail = () => {
               </button>
               
               <button 
+                className={`btn ${verifyingIntegrity || (record.isEncrypted && !isConnected) ? 'btn-secondary' : 'btn-info'}`}
+                onClick={verifyIntegrity} 
+                disabled={verifyingIntegrity || (record.isEncrypted && !isConnected)}
+              >
+                {verifyingIntegrity ? '🔍 Verifying...' : '🔍 Verify Integrity'}
+              </button>
+
+              {record.recordId_onchain && (
+                <button 
+                  className={`btn ${verifyingIntegrity || !isConnected ? 'btn-secondary' : 'btn-info'}`}
+                  onClick={performAdvancedBlockchainVerification} 
+                  disabled={verifyingIntegrity || !isConnected}
+                >
+                  {verifyingIntegrity ? '🔗 Verifying...' : '🔗 Advanced Blockchain Verification'}
+                </button>
+              )}
+              
+              <button 
                 className="btn btn-secondary"
                 onClick={() => window.history.back()}
               >
                 ← Back to Records
-        </button>
+              </button>
             </div>
           </div>
         </div>

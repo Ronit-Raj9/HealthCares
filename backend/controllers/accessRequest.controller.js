@@ -7,6 +7,51 @@ import Patient from '../models/patient.model.js';
 import MedicalRecord from '../models/medicalRecord.model.js';
 import crypto from 'crypto';
 import { generateKeyFromSignature } from '../utils/encryption.js';
+import contractService from '../services/contractService.js';
+import { trackPatientTransaction, trackAccessTransaction } from '../utils/transactionTracker.js';
+
+// Get patient contract info for blockchain transaction (without creating request)
+export const getPatientContractInfo = asyncHandler(async (req, res) => {
+    const { patientId } = req.params;
+    const doctorId = req.user._id;
+
+    if (!patientId) {
+        throw new ApiError(400, "Patient ID is required");
+    }
+
+    // Verify the doctor exists
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+        throw new ApiError(404, "Doctor not found");
+    }
+
+    // Check if patient exists
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
+        throw new ApiError(404, "Patient not found");
+    }
+
+    // Check if there's already a pending request from this doctor to this patient
+    const existingRequest = await AccessRequest.findOne({
+        doctorId,
+        patientId,
+        status: 'pending'
+    });
+
+    if (existingRequest) {
+        throw new ApiError(400, "You already have a pending request for this patient");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, {
+            patientId: patient._id,
+            patientName: patient.name,
+            contractAddress: patient.contractAddress,
+            contractDeploymentStatus: patient.contractDeploymentStatus,
+            hasBlockchainContract: !!(patient.contractAddress && patient.contractDeploymentStatus === 'deployed')
+        }, "Patient contract info retrieved successfully")
+    );
+});
 
 // Doctor creates an access request
 export const createAccessRequest = asyncHandler(async (req, res) => {
@@ -31,7 +76,7 @@ export const createAccessRequest = asyncHandler(async (req, res) => {
         throw new ApiError(403, "Wallet address does not match registered doctor wallet");
     }
 
-    // Check if patient exists
+    // Check if patient exists and has a deployed contract
     const patient = await Patient.findById(patientId);
     if (!patient) {
         throw new ApiError(404, "Patient not found");
@@ -52,14 +97,40 @@ export const createAccessRequest = asyncHandler(async (req, res) => {
         doctorId,
         patientId,
         requestReason,
-        requestType
+        requestType,
+        doctorWalletAddress: walletAddress
     });
+
+    // If patient has a deployed contract, create blockchain access request
+    if (patient.contractAddress && patient.contractDeploymentStatus === 'deployed') {
+        try {
+            // Create contract instance with doctor's address
+            const contract = await contractService.connectToPatientContract(patient.contractAddress);
+            
+            // Note: The doctor needs to call requestAccess() on the blockchain
+            // This should be done from the frontend, but we store the contract info for reference
+            accessRequest.patientContractAddress = patient.contractAddress;
+            await accessRequest.save();
+            
+            console.log('Access request created with blockchain contract info:', {
+                requestId: accessRequest._id,
+                patientContract: patient.contractAddress,
+                doctorWallet: walletAddress
+            });
+        } catch (contractError) {
+            console.warn('Could not create blockchain access request:', contractError.message);
+        }
+    }
 
     // Populate doctor info for response
     await accessRequest.populate('doctorId', 'name email specialization');
 
     return res.status(201).json(
-        new ApiResponse(201, accessRequest, "Access request sent successfully")
+        new ApiResponse(201, {
+            ...accessRequest.toObject(),
+            requiresBlockchainAction: !!(patient.contractAddress && patient.contractDeploymentStatus === 'deployed'),
+            patientContractAddress: patient.contractAddress
+        }, "Access request sent successfully")
     );
 });
 
@@ -68,7 +139,7 @@ export const getDoctorRequests = asyncHandler(async (req, res) => {
     const doctorId = req.user._id;
 
     const requests = await AccessRequest.find({ doctorId })
-        .populate('patientId', 'name email age gender')
+        .populate('patientId', 'name email age gender contractAddress contractDeploymentStatus')
         .populate('selectedRecords', 'name recordType dateCreated')
         .sort({ requestedAt: -1 });
 
@@ -82,7 +153,7 @@ export const getPatientRequests = asyncHandler(async (req, res) => {
     const patientId = req.user._id;
 
     const requests = await AccessRequest.find({ patientId })
-        .populate('doctorId', 'name email specialization image')
+        .populate('doctorId', 'name email specialization image walletAddress')
         .sort({ requestedAt: -1 });
 
     return res.status(200).json(
@@ -107,7 +178,7 @@ export const respondToAccessRequest = asyncHandler(async (req, res) => {
         _id: requestId,
         patientId,
         status: 'pending'
-    });
+    }).populate('doctorId');
 
     if (!accessRequest) {
         throw new ApiError(404, "Access request not found or already processed");
@@ -120,6 +191,10 @@ export const respondToAccessRequest = asyncHandler(async (req, res) => {
     if (action === 'approve') {
         if (!selectedRecords || selectedRecords.length === 0) {
             throw new ApiError(400, "At least one record must be selected for approval");
+        }
+
+        if (!patientSignature) {
+            throw new ApiError(400, "Patient signature is required for approval to encrypt access keys");
         }
 
         // Validate that all selected records belong to the patient
@@ -139,16 +214,13 @@ export const respondToAccessRequest = asyncHandler(async (req, res) => {
         accessExpiresAt.setDate(accessExpiresAt.getDate() + accessDuration);
         accessRequest.accessExpiresAt = accessExpiresAt;
 
-        // Generate patient's encryption key from their signature (if provided)
-        let patientEncryptionKey = null;
-        if (patientSignature) {
-            patientEncryptionKey = generateKeyFromSignature(patientSignature);
-        }
+        // Generate patient's encryption key from their signature
+        const patientEncryptionKey = generateKeyFromSignature(patientSignature);
 
-        // Create access granted records with unique access keys for the doctor
+        // Create access granted records with patient's original encryption key
         accessRequest.accessGrantedRecords = records.map(record => ({
             recordId: record._id,
-            accessKey: crypto.randomBytes(32).toString('hex'), // Unique key for this doctor-record pair
+            accessKey: crypto.randomBytes(32).toString('hex'), // Unique access identifier
             patientEncryptionKey: patientEncryptionKey // Store patient's original encryption key
         }));
 
@@ -158,7 +230,7 @@ export const respondToAccessRequest = asyncHandler(async (req, res) => {
             {
                 $push: {
                     authorizedUsers: {
-                        userId: accessRequest.doctorId,
+                        userId: accessRequest.doctorId._id,
                         userType: 'Doctor',
                         accessExpiresAt: accessExpiresAt,
                         grantedAt: new Date()
@@ -166,13 +238,79 @@ export const respondToAccessRequest = asyncHandler(async (req, res) => {
                 }
             }
         );
+
+        // Handle blockchain approval if patient has a deployed contract
+        const patient = await Patient.findById(patientId);
+        if (patient && patient.contractAddress && patient.contractDeploymentStatus === 'deployed') {
+            try {
+                // Group records by type for blockchain approval
+                const recordsByType = {
+                    prescriptionIds: [],
+                    reportIds: [],
+                    billIds: []
+                };
+
+                for (const record of records) {
+                    if (record.recordId_onchain !== null && record.recordId_onchain !== undefined) {
+                        switch (record.recordType) {
+                            case 'prescription':
+                                recordsByType.prescriptionIds.push(record.recordId_onchain);
+                                break;
+                            case 'report':
+                                recordsByType.reportIds.push(record.recordId_onchain);
+                                break;
+                            case 'bill':
+                                recordsByType.billIds.push(record.recordId_onchain);
+                                break;
+                        }
+                    }
+                }
+
+                // Only approve if there are on-chain records
+                const hasOnChainRecords = recordsByType.prescriptionIds.length > 0 || 
+                                        recordsByType.reportIds.length > 0 || 
+                                        recordsByType.billIds.length > 0;
+
+                if (hasOnChainRecords && accessRequest.doctorId.walletAddress) {
+                    const expiryDuration = accessDuration * 24 * 60 * 60; // Convert days to seconds
+                    
+                    const blockchainResult = await contractService.grantAccess(
+                        patient.contractAddress,
+                        accessRequest.doctorId.walletAddress,
+                        expiryDuration,
+                        recordsByType.prescriptionIds,
+                        recordsByType.reportIds,
+                        recordsByType.billIds
+                    );
+
+                    accessRequest.blockchainTransactions = {
+                        approval: {
+                            transactionHash: blockchainResult.transactionHash,
+                            blockNumber: blockchainResult.blockNumber,
+                            gasUsed: blockchainResult.gasUsed,
+                            contractFunction: 'approveAccess',
+                            timestamp: new Date(),
+                            status: 'confirmed'
+                        }
+                    };
+
+                    console.log('Blockchain access approval successful:', blockchainResult);
+                } else {
+                    console.log('No on-chain records to approve or doctor wallet not available');
+                }
+            } catch (contractError) {
+                console.warn('Blockchain approval failed, but off-chain approval continues:', contractError.message);
+                // Don't fail the entire approval if blockchain fails
+                accessRequest.blockchainError = contractError.message;
+            }
+        }
     }
 
     await accessRequest.save();
 
     // Populate for response
     await accessRequest.populate([
-        { path: 'doctorId', select: 'name email specialization' },
+        { path: 'doctorId', select: 'name email specialization walletAddress' },
         { path: 'selectedRecords', select: 'name recordType dateCreated' }
     ]);
 
@@ -191,9 +329,9 @@ export const getAuthorizedRecords = asyncHandler(async (req, res) => {
             doctorId,
             status: 'approved',
             accessExpiresAt: { $gt: new Date() } // Not expired
-        }).populate('selectedRecords').populate('patientId', 'name');
+        }).populate('selectedRecords').populate('patientId', 'name contractAddress');
 
-        // Flatten all authorized records
+        // Flatten all authorized records with patient and access info
         const authorizedRecords = [];
         for (const request of approvedRequests) {
             for (const record of request.selectedRecords || []) {
@@ -201,8 +339,12 @@ export const getAuthorizedRecords = asyncHandler(async (req, res) => {
                 const recordWithAccess = {
                     ...record.toObject(),
                     patientName: request.patientId?.name || 'Unknown Patient',
+                    patientContractAddress: request.patientId?.contractAddress || null,
                     accessExpiresAt: request.accessExpiresAt,
-                    grantedAt: request.respondedAt
+                    grantedAt: request.respondedAt,
+                    requestId: request._id,
+                    // Add blockchain verification status
+                    hasBlockchainVerification: !!(record.patientContractAddress && record.recordId_onchain !== null)
                 };
                 authorizedRecords.push(recordWithAccess);
             }
@@ -214,6 +356,77 @@ export const getAuthorizedRecords = asyncHandler(async (req, res) => {
     } catch (error) {
         console.error('Error getting authorized records:', error);
         throw new ApiError(500, "Error retrieving authorized records");
+    }
+});
+
+// Get blockchain-verified authorized records for a doctor
+export const getBlockchainAuthorizedRecords = asyncHandler(async (req, res) => {
+    const doctorId = req.user._id;
+
+    try {
+        const doctor = await Doctor.findById(doctorId);
+        if (!doctor || !doctor.walletAddress) {
+            throw new ApiError(400, "Doctor wallet address not found");
+        }
+
+        // Find all approved requests with blockchain contracts
+        const approvedRequests = await AccessRequest.find({
+            doctorId,
+            status: 'approved',
+            accessExpiresAt: { $gt: new Date() },
+            patientContractAddress: { $exists: true, $ne: null }
+        }).populate('patientId', 'name contractAddress');
+
+        const blockchainAuthorizedRecords = [];
+
+        for (const request of approvedRequests) {
+            if (request.patientContractAddress) {
+                try {
+                    // Get approved records from blockchain
+                    const blockchainRecords = await contractService.getApprovedRecords(
+                        request.patientContractAddress,
+                        doctor.walletAddress
+                    );
+
+                    // Combine blockchain data with database records
+                    const allBlockchainRecords = [
+                        ...blockchainRecords.prescriptions.map(r => ({ ...r, type: 'prescription' })),
+                        ...blockchainRecords.reports.map(r => ({ ...r, type: 'report' })),
+                        ...blockchainRecords.bills.map(r => ({ ...r, type: 'bill' }))
+                    ];
+
+                    for (const blockchainRecord of allBlockchainRecords) {
+                        // Find corresponding database record
+                        const dbRecord = await MedicalRecord.findOne({
+                            name: blockchainRecord.prescriptionName || blockchainRecord.reportName || blockchainRecord.billName,
+                            recordType: blockchainRecord.type,
+                            patientId: request.patientId._id
+                        });
+
+                        if (dbRecord) {
+                            blockchainAuthorizedRecords.push({
+                                ...dbRecord.toObject(),
+                                patientName: request.patientId.name,
+                                accessExpiresAt: request.accessExpiresAt,
+                                grantedAt: request.respondedAt,
+                                requestId: request._id,
+                                blockchainVerified: true,
+                                blockchainHash: blockchainRecord.prescriptionDataHash || blockchainRecord.reportDataHash || blockchainRecord.billDataHash
+                            });
+                        }
+                    }
+                } catch (contractError) {
+                    console.error('Error getting blockchain records for contract:', request.patientContractAddress, contractError);
+                }
+            }
+        }
+
+        return res.status(200).json(
+            new ApiResponse(200, blockchainAuthorizedRecords, "Blockchain-verified authorized records retrieved successfully")
+        );
+    } catch (error) {
+        console.error('Error getting blockchain authorized records:', error);
+        throw new ApiError(500, "Error retrieving blockchain authorized records");
     }
 });
 
@@ -258,8 +471,125 @@ export const revokeAccess = asyncHandler(async (req, res) => {
     );
 
     return res.status(200).json(
-        new ApiResponse(200, null, "Access revoked successfully")
+        new ApiResponse(200, null, "Record access revoked successfully")
     );
+});
+
+// Revoke complete access for a doctor (all records) - with blockchain integration
+export const revokeCompleteAccess = asyncHandler(async (req, res) => {
+    const { accessRequestId } = req.body;
+    const patientId = req.user._id;
+
+    if (!accessRequestId) {
+        throw new ApiError(400, "Access request ID is required");
+    }
+
+    // Find the access request
+    const accessRequest = await AccessRequest.findById(accessRequestId).populate('doctorId', 'name email walletAddress');
+    if (!accessRequest) {
+        throw new ApiError(404, "Access request not found");
+    }
+
+    // Verify patient ownership
+    if (accessRequest.patientId.toString() !== patientId.toString()) {
+        throw new ApiError(403, "Not authorized to revoke access for this request");
+    }
+
+    // Check if access is currently active
+    if (accessRequest.status !== 'approved') {
+        throw new ApiError(400, "Access is not currently approved");
+    }
+
+    try {
+        // Get patient info for blockchain transaction
+        const patient = await Patient.findById(patientId);
+        if (!patient) {
+            throw new ApiError(404, "Patient not found");
+        }
+
+        // Step 1: Blockchain transaction (if contract deployed)
+        let blockchainTransactionHash = null;
+        if (patient.contractAddress && patient.contractDeploymentStatus === 'deployed' && accessRequest.doctorId.walletAddress) {
+            const blockchainResult = await contractService.revokeAccess(
+                patient.contractAddress,
+                accessRequest.doctorId.walletAddress
+            );
+            blockchainTransactionHash = blockchainResult.transactionHash;
+
+            // Track blockchain transaction
+            await trackPatientTransaction(patientId, {
+                transactionHash: blockchainResult.transactionHash,
+                contractFunction: 'revokeAccess',
+                blockNumber: blockchainResult.blockNumber,
+                gasUsed: blockchainResult.gasUsed,
+                status: 'confirmed',
+                relatedData: {
+                    doctorAddress: accessRequest.doctorId.walletAddress,
+                    revokedAccessRequestId: accessRequestId
+                }
+            });
+        }
+
+        // Step 2: Update database - revoke access request
+        accessRequest.status = 'revoked';
+        accessRequest.revokedAt = new Date();
+        accessRequest.revokedBy = patientId;
+
+        // Add revocation transaction info
+        if (!accessRequest.blockchainTransactions) {
+            accessRequest.blockchainTransactions = {};
+        }
+        accessRequest.blockchainTransactions.revocation = {
+            transactionHash: blockchainTransactionHash,
+            timestamp: new Date(),
+            status: blockchainTransactionHash ? 'confirmed' : 'not_available'
+        };
+
+        await accessRequest.save();
+
+        // Step 3: Remove doctor from all medical records' authorized users
+        await MedicalRecord.updateMany(
+            { 
+                patientId,
+                'authorizedUsers.userId': accessRequest.doctorId._id 
+            },
+            {
+                $pull: {
+                    authorizedUsers: { userId: accessRequest.doctorId._id }
+                }
+            }
+        );
+
+        return res.status(200).json(
+            new ApiResponse(200, {
+                accessRequest,
+                blockchainTransactionHash,
+                revokedAt: accessRequest.revokedAt
+            }, "Complete access revoked successfully")
+        );
+    } catch (error) {
+        console.error('Access revocation failed:', error);
+        throw new ApiError(500, `Failed to revoke access: ${error.message}`);
+    }
+});
+
+// Get revoked access requests for patient
+export const getRevokedAccessRequests = asyncHandler(async (req, res) => {
+    const patientId = req.user._id;
+
+    try {
+        const revokedRequests = await AccessRequest.find({
+            patientId,
+            status: 'revoked'
+        }).populate('doctorId', 'name email specialization').sort({ revokedAt: -1 });
+
+        return res.status(200).json(
+            new ApiResponse(200, revokedRequests, "Revoked access requests fetched successfully")
+        );
+    } catch (error) {
+        console.error('Failed to fetch revoked requests:', error);
+        throw new ApiError(500, `Failed to fetch revoked requests: ${error.message}`);
+    }
 });
 
 // Clean up expired access requests and authorizations (admin/system function)
@@ -290,4 +620,387 @@ export const cleanupExpiredAccess = asyncHandler(async (req, res) => {
     return res.status(200).json(
         new ApiResponse(200, null, "Expired access cleaned up successfully")
     );
+});
+
+// Get access request details with blockchain status
+export const getAccessRequestDetails = asyncHandler(async (req, res) => {
+    const { requestId } = req.params;
+
+    const accessRequest = await AccessRequest.findById(requestId)
+        .populate('doctorId', 'name email specialization walletAddress')
+        .populate('patientId', 'name contractAddress contractDeploymentStatus')
+        .populate('selectedRecords');
+
+    if (!accessRequest) {
+        throw new ApiError(404, "Access request not found");
+    }
+
+    // Check if user has permission to view this request
+    const userId = req.user._id.toString();
+    const isDoctorRequest = accessRequest.doctorId._id.toString() === userId;
+    const isPatientRequest = accessRequest.patientId._id.toString() === userId;
+
+    if (!isDoctorRequest && !isPatientRequest) {
+        throw new ApiError(403, "Not authorized to view this access request");
+    }
+
+    // Add blockchain verification status
+    let blockchainStatus = null;
+    if (accessRequest.patientContractAddress && accessRequest.status === 'approved') {
+        try {
+            const doctor = accessRequest.doctorId;
+            if (doctor.walletAddress) {
+                const blockchainRecords = await contractService.getApprovedRecords(
+                    accessRequest.patientContractAddress,
+                    doctor.walletAddress
+                );
+                
+                blockchainStatus = {
+                    contractAddress: accessRequest.patientContractAddress,
+                    hasBlockchainAccess: !!(blockchainRecords.prescriptions.length || blockchainRecords.reports.length || blockchainRecords.bills.length),
+                    blockchainRecords
+                };
+            }
+        } catch (error) {
+            blockchainStatus = {
+                contractAddress: accessRequest.patientContractAddress,
+                error: error.message
+            };
+        }
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, {
+            ...accessRequest.toObject(),
+            blockchainStatus
+        }, "Access request details retrieved successfully")
+    );
+});
+
+// ========================================
+// ACCESS EXTENSION WORKFLOW
+// ========================================
+
+// Doctor requests access extension
+export const requestAccessExtension = asyncHandler(async (req, res) => {
+    const { accessRequestId, additionalTime, reason } = req.body;
+    const doctorId = req.user._id;
+
+    if (!accessRequestId || !additionalTime || additionalTime <= 0) {
+        throw new ApiError(400, "Access request ID and valid additional time (in seconds) are required");
+    }
+
+    // Find the access request
+    const accessRequest = await AccessRequest.findById(accessRequestId).populate('patientId', 'contractAddress contractDeploymentStatus');
+    if (!accessRequest) {
+        throw new ApiError(404, "Access request not found");
+    }
+
+    // Verify doctor ownership
+    if (accessRequest.doctorId.toString() !== doctorId.toString()) {
+        throw new ApiError(403, "Not authorized to request extension for this access request");
+    }
+
+    // Check if access is currently approved
+    if (accessRequest.status !== 'approved') {
+        throw new ApiError(400, "Can only request extension for approved access requests");
+    }
+
+    // Check if access has not expired yet
+    if (accessRequest.accessExpiresAt && accessRequest.accessExpiresAt < new Date()) {
+        throw new ApiError(400, "Cannot request extension for expired access");
+    }
+
+    try {
+        // Step 1: Blockchain transaction (if patient has deployed contract)
+        let blockchainTransactionHash = null;
+        if (accessRequest.patientId.contractAddress && accessRequest.patientId.contractDeploymentStatus === 'deployed') {
+            const blockchainResult = await contractService.requestExtendAccess(
+                accessRequest.patientId.contractAddress,
+                additionalTime
+            );
+            blockchainTransactionHash = blockchainResult.transactionHash;
+
+            // Track blockchain transaction
+            await trackAccessTransaction(
+                accessRequestId,
+                doctorId,
+                accessRequest.doctorId.walletAddress,
+                {
+                    transactionHash: blockchainResult.transactionHash,
+                    blockNumber: blockchainResult.blockNumber,
+                    gasUsed: blockchainResult.gasUsed,
+                    contractFunction: 'requestExtendAccess',
+                    status: 'confirmed'
+                }
+            );
+        }
+
+        // Step 2: Add extension request to database
+        accessRequest.extensionRequests.push({
+            additionalTime: additionalTime,
+            reason: reason || '',
+            status: 'pending',
+            blockchainTransactionHash
+        });
+
+        await accessRequest.save();
+
+        // Populate for response
+        await accessRequest.populate([
+            { path: 'doctorId', select: 'name email specialization' },
+            { path: 'patientId', select: 'name email' }
+        ]);
+
+        return res.status(200).json(
+            new ApiResponse(200, {
+                accessRequest,
+                extensionRequest: accessRequest.extensionRequests[accessRequest.extensionRequests.length - 1],
+                blockchainTransactionHash
+            }, "Access extension requested successfully")
+        );
+    } catch (error) {
+        console.error('Extension request failed:', error);
+        throw new ApiError(500, `Failed to request access extension: ${error.message}`);
+    }
+});
+
+// Patient approves access extension
+export const approveAccessExtension = asyncHandler(async (req, res) => {
+    const { accessRequestId, extensionRequestId } = req.body;
+    const patientId = req.user._id;
+
+    if (!accessRequestId || !extensionRequestId) {
+        throw new ApiError(400, "Access request ID and extension request ID are required");
+    }
+
+    // Find the access request
+    const accessRequest = await AccessRequest.findById(accessRequestId).populate('doctorId', 'name email walletAddress');
+    if (!accessRequest) {
+        throw new ApiError(404, "Access request not found");
+    }
+
+    // Verify patient ownership
+    if (accessRequest.patientId.toString() !== patientId.toString()) {
+        throw new ApiError(403, "Not authorized to approve extension for this access request");
+    }
+
+    // Find the extension request
+    const extensionRequest = accessRequest.extensionRequests.id(extensionRequestId);
+    if (!extensionRequest) {
+        throw new ApiError(404, "Extension request not found");
+    }
+
+    // Check if extension request is still pending
+    if (extensionRequest.status !== 'pending') {
+        throw new ApiError(400, "Extension request has already been processed");
+    }
+
+    try {
+        // Get patient info for blockchain transaction
+        const patient = await Patient.findById(patientId);
+        if (!patient) {
+            throw new ApiError(404, "Patient not found");
+        }
+
+        // Step 1: Blockchain transaction (if contract deployed)
+        let blockchainTransactionHash = null;
+        if (patient.contractAddress && patient.contractDeploymentStatus === 'deployed') {
+            const blockchainResult = await contractService.approveExtendAccess(
+                patient.contractAddress,
+                accessRequest.doctorId.walletAddress
+            );
+            blockchainTransactionHash = blockchainResult.transactionHash;
+
+            // Track blockchain transaction
+            await trackPatientTransaction(patientId, {
+                transactionHash: blockchainResult.transactionHash,
+                contractFunction: 'approveExtendAccess',
+                blockNumber: blockchainResult.blockNumber,
+                gasUsed: blockchainResult.gasUsed,
+                status: 'confirmed',
+                relatedData: {
+                    doctorAddress: accessRequest.doctorId.walletAddress,
+                    additionalTime: extensionRequest.additionalTime
+                }
+            });
+        }
+
+        // Step 2: Update database - extend access time
+        const currentExpiryTime = accessRequest.accessExpiresAt || new Date();
+        const newExpiryTime = new Date(currentExpiryTime.getTime() + (extensionRequest.additionalTime * 1000));
+        
+        accessRequest.accessExpiresAt = newExpiryTime;
+        
+        // Update extension request status
+        extensionRequest.status = 'approved';
+        extensionRequest.processedAt = new Date();
+        extensionRequest.processedBy = patientId;
+        extensionRequest.blockchainTransactionHash = blockchainTransactionHash;
+
+        await accessRequest.save();
+
+        return res.status(200).json(
+            new ApiResponse(200, {
+                accessRequest,
+                extensionRequest,
+                newExpiryTime,
+                blockchainTransactionHash
+            }, "Access extension approved successfully")
+        );
+    } catch (error) {
+        console.error('Extension approval failed:', error);
+        throw new ApiError(500, `Failed to approve access extension: ${error.message}`);
+    }
+});
+
+// Patient denies access extension
+export const denyAccessExtension = asyncHandler(async (req, res) => {
+    const { accessRequestId, extensionRequestId, denialReason } = req.body;
+    const patientId = req.user._id;
+
+    if (!accessRequestId || !extensionRequestId) {
+        throw new ApiError(400, "Access request ID and extension request ID are required");
+    }
+
+    // Find the access request
+    const accessRequest = await AccessRequest.findById(accessRequestId);
+    if (!accessRequest) {
+        throw new ApiError(404, "Access request not found");
+    }
+
+    // Verify patient ownership
+    if (accessRequest.patientId.toString() !== patientId.toString()) {
+        throw new ApiError(403, "Not authorized to deny extension for this access request");
+    }
+
+    // Find the extension request
+    const extensionRequest = accessRequest.extensionRequests.id(extensionRequestId);
+    if (!extensionRequest) {
+        throw new ApiError(404, "Extension request not found");
+    }
+
+    // Check if extension request is still pending
+    if (extensionRequest.status !== 'pending') {
+        throw new ApiError(400, "Extension request has already been processed");
+    }
+
+    // Update extension request status
+    extensionRequest.status = 'denied';
+    extensionRequest.processedAt = new Date();
+    extensionRequest.processedBy = patientId;
+    extensionRequest.reason = denialReason || extensionRequest.reason;
+
+    await accessRequest.save();
+
+    return res.status(200).json(
+        new ApiResponse(200, {
+            extensionRequest
+        }, "Access extension denied successfully")
+    );
+});
+
+// Get pending extension requests for a patient
+export const getPatientExtensionRequests = asyncHandler(async (req, res) => {
+    const patientId = req.user._id;
+
+    try {
+        const accessRequestsWithExtensions = await AccessRequest.find({
+            patientId,
+            'extensionRequests.status': 'pending'
+        }).populate('doctorId', 'name email specialization');
+
+        // Extract pending extension requests
+        const pendingExtensions = [];
+        accessRequestsWithExtensions.forEach(accessRequest => {
+            accessRequest.extensionRequests.forEach(extension => {
+                if (extension.status === 'pending') {
+                    pendingExtensions.push({
+                        accessRequestId: accessRequest._id,
+                        extensionRequestId: extension._id,
+                        doctor: accessRequest.doctorId,
+                        currentExpiry: accessRequest.accessExpiresAt,
+                        additionalTime: extension.additionalTime,
+                        reason: extension.reason,
+                        requestedAt: extension.requestedAt
+                    });
+                }
+            });
+        });
+
+        return res.status(200).json(
+            new ApiResponse(200, pendingExtensions, "Pending extension requests fetched successfully")
+        );
+    } catch (error) {
+        console.error('Failed to fetch extension requests:', error);
+        throw new ApiError(500, `Failed to fetch extension requests: ${error.message}`);
+    }
+});
+
+// Get extension requests for a doctor
+export const getDoctorExtensionRequests = asyncHandler(async (req, res) => {
+    const doctorId = req.user._id;
+
+    try {
+        const accessRequestsWithExtensions = await AccessRequest.find({
+            doctorId,
+            $or: [
+                { 'extensionRequests.status': 'pending' },
+                { 'extensionRequests.status': 'approved' },
+                { 'extensionRequests.status': 'denied' }
+            ]
+        }).populate('patientId', 'name email');
+
+        // Extract extension requests
+        const extensionRequests = [];
+        accessRequestsWithExtensions.forEach(accessRequest => {
+            accessRequest.extensionRequests.forEach(extension => {
+                extensionRequests.push({
+                    accessRequestId: accessRequest._id,
+                    extensionRequestId: extension._id,
+                    patient: accessRequest.patientId,
+                    currentExpiry: accessRequest.accessExpiresAt,
+                    additionalTime: extension.additionalTime,
+                    reason: extension.reason,
+                    status: extension.status,
+                    requestedAt: extension.requestedAt,
+                    processedAt: extension.processedAt,
+                    blockchainTransactionHash: extension.blockchainTransactionHash
+                });
+            });
+        });
+
+        return res.status(200).json(
+            new ApiResponse(200, extensionRequests, "Extension requests fetched successfully")
+        );
+    } catch (error) {
+        console.error('Failed to fetch doctor extension requests:', error);
+        throw new ApiError(500, `Failed to fetch extension requests: ${error.message}`);
+    }
+});
+
+// Check extension request status on blockchain
+export const checkBlockchainExtensionStatus = asyncHandler(async (req, res) => {
+    const { contractAddress, doctorAddress } = req.params;
+
+    if (!contractAddress || !doctorAddress) {
+        throw new ApiError(400, "Contract address and doctor address are required");
+    }
+
+    try {
+        const extensionInfo = await contractService.checkExtensionRequest(contractAddress, doctorAddress);
+
+        return res.status(200).json(
+            new ApiResponse(200, {
+                exists: extensionInfo.exists,
+                additionalTime: extensionInfo.additionalTime,
+                requestTime: extensionInfo.requestTime,
+                contractAddress,
+                doctorAddress
+            }, "Blockchain extension status fetched successfully")
+        );
+    } catch (error) {
+        console.error('Failed to check blockchain extension status:', error);
+        throw new ApiError(500, `Failed to check blockchain extension status: ${error.message}`);
+    }
 }); 

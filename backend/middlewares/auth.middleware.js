@@ -112,4 +112,7 @@ const verifyPatientOrDoctorJWT = asyncHandler(async (req, res, next) => {
     next();
 });
 
-export { verifyPatientJWT , verifyDoctorJWT, verifyPatientOrDoctorJWT };
+// Generic JWT verification (alias for verifyPatientOrDoctorJWT)
+const verifyJWT = verifyPatientOrDoctorJWT;
+
+export { verifyPatientJWT , verifyDoctorJWT, verifyPatientOrDoctorJWT, verifyJWT };

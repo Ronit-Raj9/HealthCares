@@ -64,6 +64,37 @@ const accessRequestSchema = new mongoose.Schema({
         },
         accessKey: String, // Encrypted key for this doctor to access this record
         patientEncryptionKey: String // The original key patient used to encrypt this record
+    }],
+    
+    // Extension Request Tracking (for requestExtendAccess/approveExtendAccess workflow)
+    extensionRequests: [{
+        requestedAt: {
+            type: Date,
+            default: Date.now
+        },
+        additionalTime: {
+            type: Number, // Additional time in seconds
+            required: true
+        },
+        reason: {
+            type: String,
+            trim: true
+        },
+        status: {
+            type: String,
+            enum: ['pending', 'approved', 'denied'],
+            default: 'pending'
+        },
+        processedAt: {
+            type: Date
+        },
+        processedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Patient'
+        },
+        blockchainTransactionHash: {
+            type: String // Transaction hash for approveExtendAccess
+        }
     }]
 }, {
     timestamps: true

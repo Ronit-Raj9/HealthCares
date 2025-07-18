@@ -46,6 +46,24 @@ const  patientSchema = new Schema({
         type: String,
         
     },
+    // Physical measurements for blockchain contract integration
+    height: {
+        type: Number, // Height in centimeters
+        default: 170 // Default height
+    },
+    weight: {
+        type: Number, // Weight in kilograms  
+        default: 70 // Default weight
+    },
+    // Blockchain profile sync tracking
+    lastBlockchainProfileUpdate: {
+        type: Date,
+        default: null
+    },
+    blockchainProfileSynced: {
+        type: Boolean,
+        default: false // Whether profile data matches blockchain contract
+    },
     image: {
         type: String,
         

@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config(); // Load environment variables immediately
+
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -7,7 +10,6 @@ import doctorRouter from './routes/doctorRoutes.js';
 import contactRouter from './routes/contact.js';
 import cookieParser from 'cookie-parser';
 import chatRouter from './routes/chat.js';
-import dotenv from 'dotenv';
 import imageUploadRoutes from './routes/upload.js';
 import forgotPassRouter from "./routes/forget-pass.js";
 import notificationRouter from "./routes/notifRouters.js";
@@ -15,8 +17,11 @@ import medicalRecordRouter from "./routes/medicalRecord.routes.js";
 import keyManagementRouter from "./routes/keyManagement.routes.js";
 import accessRequestRouter from "./routes/accessRequestRoutes.js";
 import transactionHistoryRouter from "./routes/transactionHistory.routes.js";
+import systemRouter from "./routes/system.routes.js";
+import adminRouter from "./routes/admin.routes.js";
 import path from 'path';
 import { fileURLToPath } from 'url';
+import process from 'process';
 
 // Configure dotenv for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -28,7 +33,6 @@ try {
 } catch (error) {
     console.log('No .env file found, using default values');
 }
-
 // Set default environment variables if not provided
 process.env.MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/healthcare';
 process.env.ACCESSJWT_SECRET = process.env.ACCESSJWT_SECRET || 'hello123';
@@ -69,6 +73,8 @@ app.use('/api/medical-records', medicalRecordRouter);
 app.use('/api/keys', keyManagementRouter);
 app.use('/api/access-requests', accessRequestRouter);
 app.use('/api/transactions', transactionHistoryRouter);
+app.use('/api/system', systemRouter);
+app.use('/api/admin', adminRouter);
 
 // Start the server
 app.listen(5000, () => {

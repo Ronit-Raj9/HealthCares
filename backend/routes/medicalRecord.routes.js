@@ -6,7 +6,10 @@ import {
     revokeAccess,
     getAuthorizedRecords,
     viewMedicalRecord,
-    getRecordById
+    getRecordById,
+    verifyRecordIntegrity,
+    syncAllRecordsIntegrity,
+    verifyBlockchainRecord
 } from '../controllers/medicalRecord.controller.js';
 import { verifyPatientJWT, verifyPatientOrDoctorJWT } from '../middlewares/auth.middleware.js';
 import multer from 'multer';
@@ -23,6 +26,11 @@ router.get('/authorized-records', verifyPatientJWT, getAuthorizedRecords);
 
 // Routes accessible by both patients and doctors
 router.get('/view/:ipfsHash', verifyPatientOrDoctorJWT, viewMedicalRecord);
+router.get('/verify/:ipfsHash', verifyPatientOrDoctorJWT, verifyRecordIntegrity);
 router.get('/:id', verifyPatientOrDoctorJWT, getRecordById);
+
+// Enhanced verification routes
+router.post('/sync-all-integrity', verifyPatientJWT, syncAllRecordsIntegrity);
+router.get('/verify-blockchain/:recordId', verifyPatientOrDoctorJWT, verifyBlockchainRecord);
 
 export default router; 

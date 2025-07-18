@@ -11,7 +11,7 @@ import {
   RainbowKitProvider,
 } from '@rainbow-me/rainbowkit'
 import { WagmiProvider, createConfig, http } from 'wagmi'
-import { mainnet, sepolia } from 'wagmi/chains'
+import { sepolia } from 'wagmi/chains'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const { wallets } = getDefaultWallets({
@@ -20,9 +20,8 @@ const { wallets } = getDefaultWallets({
 })
 
 const config = createConfig({
-  chains: [mainnet, sepolia],
+  chains: [sepolia], // Only Sepolia testnet
   transports: {
-    [mainnet.id]: http(),
     [sepolia.id]: http(),
   },
 })
