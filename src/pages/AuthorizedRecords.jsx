@@ -800,7 +800,7 @@ const AuthorizedRecords = () => {
                                                             : `✅ ${expiryStatus.days} days left`
                                                         }
                                                     </span>
-                                                </div>
+                                            </div>
                                         </div>
                                         <div className="record-info">
                                             <p><strong>Patient:</strong> {record.patientName}</p>

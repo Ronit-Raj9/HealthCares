@@ -138,29 +138,29 @@ const getPatientReportById = asyncHandler(async (req, res) => {
 
 const registerPatient = asyncHandler(async (req, res) => {
     const { name, email, password, age, gender, address, phone, bloodgroup, walletAddress, image } = req.body;
-        
-        if (!name || !email || !password || !walletAddress) {
+
+    if (!name || !email || !password || !walletAddress) {
         throw new ApiError(400, "Name, email, password, and wallet address are required");
-        }
+    }
 
     // Check if user already exists
     const existedPatient = await Patient.findOne({
-            $or: [{ email }, { walletAddress }] 
-        });
-        
+        $or: [{ email }, { walletAddress }]
+    });
+
     if (existedPatient) {
         throw new ApiError(409, "Patient already exists with this email or wallet address");
-        }
+    }
 
     // Create patient
-        const patient = await Patient.create({
-            name,
-            email,
+    const patient = await Patient.create({
+        name,
+        email,
         password,
-            age,
-            gender,
-            address,
-            phone,
+        age,
+        gender,
+        address,
+        phone,
         bloodGroup: bloodgroup,
         walletAddress,
         image,
@@ -174,8 +174,8 @@ const registerPatient = asyncHandler(async (req, res) => {
     }
 
     // Contract will be deployed on first login
-    return res.status(201).json(
-        new ApiResponse(201, {
+        return res.status(201).json(
+            new ApiResponse(201, {
             patient: createdPatient
         }, "Patient registered successfully. Contract will be deployed on first login.")
         );

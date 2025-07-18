@@ -596,7 +596,7 @@ const RecordDetail = () => {
               >
                 {verifyingIntegrity ? '🔍 Verifying...' : '🔍 Verify Integrity'}
               </button>
-
+{/* 
               {record.recordId_onchain && (
                 <button 
                   className={`btn ${verifyingIntegrity || !isConnected ? 'btn-secondary' : 'btn-info'}`}
@@ -605,7 +605,7 @@ const RecordDetail = () => {
                 >
                   {verifyingIntegrity ? '🔗 Verifying...' : '🔗 Advanced Blockchain Verification'}
                 </button>
-              )}
+              )} */}
               
               <button 
                 className="btn btn-secondary"

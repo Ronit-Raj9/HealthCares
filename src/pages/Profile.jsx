@@ -111,11 +111,11 @@ function Profile() {
       dispatch(setLoading(true));
 
       const userType = localStorage.getItem("patient") ? "patient" : "doctor";
-      
+
       if (userType === "patient") {
         // Use unified profile update for patients
-        const payload = {
-          ...formDetails,
+      const payload = {
+        ...formDetails,
           image: imageUrl,
         };
         delete payload.confpassword;
@@ -159,7 +159,7 @@ function Profile() {
           ...formDetails,
           image: imageUrl,
         };
-        delete payload.confpassword;
+      delete payload.confpassword;
 
         await fetch(updateUrl, {
           method: "PUT",
@@ -221,159 +221,159 @@ function Profile() {
                         Status: {contractStatus.contractDeploymentStatus}
                       </div>
                     </>
-                  )}
-                </div>
+              )}
+            </div>
               </div>
             )}
 
             {/* Profile Image */}
-            <img
-              src={imageUrl || "/default-profile.png"}
-              alt="profile"
-              className="profile-pic"
-            />
+                <img
+                  src={imageUrl || "/default-profile.png"}
+                  alt="profile"
+                  className="profile-pic"
+                />
 
-            <form onSubmit={formSubmission} className="register-form">
+                <form onSubmit={formSubmission} className="register-form">
               {/* Basic Information */}
-              <div className="form-same-row">
-                <input
-                  type="text"
-                  name="name"
-                  className="form-input"
-                  placeholder="Enter your name"
-                  value={formDetails.name}
-                  onChange={inputChange}
-                />
-              </div>
-
-              <div className="form-same-row">
-                <input
-                  type="email"
-                  name="email"
-                  className="form-input"
-                  placeholder="Enter your email"
-                  value={formDetails.email}
-                  onChange={inputChange}
-                />
-                <select
-                  name="gender"
-                  value={formDetails.gender}
-                  className="form-input"
-                  onChange={inputChange}
-                >
-                  <option value="neither">Prefer not to say</option>
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                </select>
-              </div>
-
-              <div className="form-same-row">
-                <input
-                  type="text"
-                  name="age"
-                  className="form-input"
-                  placeholder="Enter your age"
-                  value={formDetails.age}
-                  onChange={inputChange}
-                />
-                <input
-                  type="text"
-                  name="phone"
-                  className="form-input"
-                  placeholder="Enter your mobile number"
-                  value={formDetails.phone}
-                  onChange={inputChange}
-                />
-              </div>
-
-              {/* Medical Information (For Patients Only) */}
-              {patient && (
-                <>
                   <div className="form-same-row">
                     <input
-                      type="number"
-                      name="height"
+                      type="text"
+                      name="name"
                       className="form-input"
-                      placeholder="Height (cm)"
-                      min="50"
-                      max="300"
-                      value={formDetails.height}
-                      onChange={inputChange}
-                    />
-                    <input
-                      type="number"
-                      name="weight"
-                      className="form-input"
-                      placeholder="Weight (kg)"
-                      min="10"
-                      max="500"
-                      value={formDetails.weight}
+                      placeholder="Enter your name"
+                      value={formDetails.name}
                       onChange={inputChange}
                     />
                   </div>
 
                   <div className="form-same-row">
+                    <input
+                      type="email"
+                      name="email"
+                      className="form-input"
+                      placeholder="Enter your email"
+                      value={formDetails.email}
+                      onChange={inputChange}
+                    />
                     <select
-                      name="bloodGroup"
-                      value={formDetails.bloodGroup}
+                      name="gender"
+                      value={formDetails.gender}
                       className="form-input"
                       onChange={inputChange}
                     >
-                      <option value="">Select Blood Group</option>
-                      <option value="A+">A+</option>
-                      <option value="A-">A-</option>
-                      <option value="B+">B+</option>
-                      <option value="B-">B-</option>
-                      <option value="AB+">AB+</option>
-                      <option value="AB-">AB-</option>
-                      <option value="O+">O+</option>
-                      <option value="O-">O-</option>
+                      <option value="neither">Prefer not to say</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
                     </select>
                   </div>
-                </>
-              )}
 
-              <textarea
-                name="address"
-                className="form-input"
-                placeholder="Enter your address"
-                value={formDetails.address}
-                onChange={inputChange}
-                rows="2"
-              ></textarea>
+                  <div className="form-same-row">
+                    <input
+                      type="text"
+                      name="age"
+                      className="form-input"
+                      placeholder="Enter your age"
+                      value={formDetails.age}
+                      onChange={inputChange}
+                    />
+                    <input
+                      type="text"
+                      name="phone"
+                      className="form-input"
+                      placeholder="Enter your mobile number"
+                      value={formDetails.phone}
+                      onChange={inputChange}
+                    />
+                  </div>
+
+              {/* Medical Information (For Patients Only) */}
+                  {patient && (
+                <>
+                    <div className="form-same-row">
+                      <input
+                        type="number"
+                        name="height"
+                        className="form-input"
+                        placeholder="Height (cm)"
+                      min="50"
+                      max="300"
+                        value={formDetails.height}
+                        onChange={inputChange}
+                      />
+                      <input
+                        type="number"
+                        name="weight"
+                        className="form-input"
+                        placeholder="Weight (kg)"
+                      min="10"
+                      max="500"
+                        value={formDetails.weight}
+                        onChange={inputChange}
+                      />
+                    </div>
+
+                    <div className="form-same-row">
+                      <select
+                        name="bloodGroup"
+                        value={formDetails.bloodGroup}
+                        className="form-input"
+                        onChange={inputChange}
+                      >
+                        <option value="">Select Blood Group</option>
+                        <option value="A+">A+</option>
+                        <option value="A-">A-</option>
+                        <option value="B+">B+</option>
+                        <option value="B-">B-</option>
+                        <option value="AB+">AB+</option>
+                        <option value="AB-">AB-</option>
+                        <option value="O+">O+</option>
+                        <option value="O-">O-</option>
+                      </select>
+                    </div>
+                </>
+                  )}
+
+                  <textarea
+                    name="address"
+                    className="form-input"
+                    placeholder="Enter your address"
+                    value={formDetails.address}
+                    onChange={inputChange}
+                    rows="2"
+                  ></textarea>
 
               {/* Password Section */}
-              <div className="form-same-row">
-                <input
-                  type="password"
-                  name="password"
-                  className="form-input"
+                  <div className="form-same-row">
+                    <input
+                      type="password"
+                      name="password"
+                      className="form-input"
                   placeholder="Enter new password (optional)"
-                  value={formDetails.password}
-                  onChange={inputChange}
-                />
-                <input
-                  type="password"
-                  name="confpassword"
-                  className="form-input"
-                  placeholder="Confirm new password"
-                  value={formDetails.confpassword}
-                  onChange={inputChange}
-                />
-              </div>
+                      value={formDetails.password}
+                      onChange={inputChange}
+                    />
+                    <input
+                      type="password"
+                      name="confpassword"
+                      className="form-input"
+                      placeholder="Confirm new password"
+                      value={formDetails.confpassword}
+                      onChange={inputChange}
+                    />
+                  </div>
 
               <button type="submit" className="btn form-btn" disabled={loading}>
                 {loading ? "Updating..." : "Update Profile"}
-              </button>
+                  </button>
 
-              <button
-                type="button"
-                className="btn form-btn"
-                onClick={() => navigate("/change-password")}
-              >
-                Change Password
-              </button>
-            </form>
+                  <button
+                    type="button"
+                    className="btn form-btn"
+                    onClick={() => navigate("/change-password")}
+                  >
+                    Change Password
+                  </button>
+                </form>
 
             {/* Blockchain Info for Patients */}
             {patient && contractStatus && contractStatus.hasContract && (
