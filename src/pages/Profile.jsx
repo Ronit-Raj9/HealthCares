@@ -70,6 +70,7 @@ function Profile() {
       setImageUrl(response.data.image);
       dispatch(setLoading(false));
     } catch (error) {
+      console.error("Failed to fetch user profile:", error);
       toast.error("Failed to fetch user profile");
       dispatch(setLoading(false));
     }
@@ -126,10 +127,13 @@ function Profile() {
         );
 
         // Show appropriate success message based on what was updated
-        if (response.data.blockchainUpdated) {
-          toast.success("✅ Profile updated successfully (Database + Blockchain)");
+        if (response.data.blockchainUpdated && response.data.blockchainFieldsUpdated?.length > 0) {
+          const updatedFields = response.data.blockchainFieldsUpdated.join(', ');
+          toast.success(`✅ Profile updated successfully!\n📊 Database: All fields\n⛓️ Blockchain: ${updatedFields}`);
           if (response.data.blockchainTransaction) {
             console.log('Blockchain transaction:', response.data.blockchainTransaction.transactionHash);
+            console.log('Gas used:', response.data.blockchainTransaction.gasUsed);
+            console.log('Fields updated on blockchain:', response.data.blockchainTransaction.fieldsUpdated);
           }
         } else if (response.data.blockchainError) {
           toast("⚠️ Profile updated in database, but blockchain update failed", {
@@ -140,6 +144,8 @@ function Profile() {
             }
           });
           console.error('Blockchain error:', response.data.blockchainError);
+        } else if (response.data.blockchainFieldsUpdated?.length === 0) {
+          toast.success("✅ Profile updated successfully (database only - no blockchain fields changed)");
         } else {
           toast.success("✅ Profile updated successfully");
         }

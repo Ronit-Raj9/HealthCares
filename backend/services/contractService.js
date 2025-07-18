@@ -553,6 +553,12 @@ class ContractService {
      */
     async updatePatientProfile(contractAddress, updateData) {
         await this.ensureInitialized();
+        
+        // Check if there are any fields to update
+        if (!updateData || Object.keys(updateData).length === 0) {
+            throw new Error('No fields provided for blockchain update');
+        }
+        
         const contract = await this.connectToPatientContract(contractAddress);
         
         try {
@@ -560,66 +566,71 @@ class ContractService {
             let lastTx = null;
             let totalGasUsed = 0;
             
+            console.log('Starting blockchain updates for fields:', Object.keys(updateData));
+            
             // Execute updates sequentially to avoid nonce conflicts
-            if (updateData.name) {
+            // Only update fields that are actually provided in updateData
+            if (updateData.name !== undefined) {
                 console.log('Updating name on blockchain:', updateData.name);
                 const tx = await contract.updatePatientName(updateData.name);
                 const receipt = await tx.wait();
                 lastTx = tx;
                 totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
-                transactions.push({ field: 'name', txHash: tx.hash });
+                transactions.push({ field: 'name', txHash: tx.hash, gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : 0 });
             }
             
-            if (updateData.age) {
+            if (updateData.age !== undefined) {
                 console.log('Updating age on blockchain:', updateData.age);
                 const tx = await contract.updatePatientAge(updateData.age);
                 const receipt = await tx.wait();
                 lastTx = tx;
                 totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
-                transactions.push({ field: 'age', txHash: tx.hash });
+                transactions.push({ field: 'age', txHash: tx.hash, gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : 0 });
             }
             
-            if (updateData.gender) {
+            if (updateData.gender !== undefined) {
                 console.log('Updating gender on blockchain:', updateData.gender);
                 const tx = await contract.updatePatientGender(updateData.gender);
                 const receipt = await tx.wait();
                 lastTx = tx;
                 totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
-                transactions.push({ field: 'gender', txHash: tx.hash });
+                transactions.push({ field: 'gender', txHash: tx.hash, gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : 0 });
             }
             
-            if (updateData.height) {
+            if (updateData.height !== undefined) {
                 console.log('Updating height on blockchain:', updateData.height);
                 const tx = await contract.updatePatientHeight(updateData.height);
                 const receipt = await tx.wait();
                 lastTx = tx;
                 totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
-                transactions.push({ field: 'height', txHash: tx.hash });
+                transactions.push({ field: 'height', txHash: tx.hash, gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : 0 });
             }
             
-            if (updateData.weight) {
+            if (updateData.weight !== undefined) {
                 console.log('Updating weight on blockchain:', updateData.weight);
                 const tx = await contract.updatePatientWeight(updateData.weight);
                 const receipt = await tx.wait();
                 lastTx = tx;
                 totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
-                transactions.push({ field: 'weight', txHash: tx.hash });
+                transactions.push({ field: 'weight', txHash: tx.hash, gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : 0 });
             }
             
-            if (updateData.bloodGroup) {
+            if (updateData.bloodGroup !== undefined) {
                 console.log('Updating blood group on blockchain:', updateData.bloodGroup);
                 const tx = await contract.updatePatientBloodGroup(updateData.bloodGroup);
                 const receipt = await tx.wait();
                 lastTx = tx;
                 totalGasUsed += receipt.gasUsed ? Number(receipt.gasUsed) : 0;
-                transactions.push({ field: 'bloodGroup', txHash: tx.hash });
+                transactions.push({ field: 'bloodGroup', txHash: tx.hash, gasUsed: receipt.gasUsed ? Number(receipt.gasUsed) : 0 });
             }
             
             if (!lastTx) {
-                throw new Error('No blockchain updates to perform');
+                throw new Error('No blockchain updates were performed');
             }
             
             const finalReceipt = await lastTx.wait();
+            
+            console.log(`Blockchain update completed. Updated ${transactions.length} field(s). Total gas used: ${totalGasUsed}`);
             
             return {
                 transactionHash: lastTx.hash,
@@ -627,7 +638,8 @@ class ContractService {
                 gasUsed: totalGasUsed,
                 contractFunction: 'updatePatientProfile',
                 fieldsUpdated: transactions.map(t => t.field),
-                allTransactions: transactions
+                allTransactions: transactions,
+                totalTransactions: transactions.length
             };
         } catch (error) {
             console.error('Error updating patient profile on blockchain:', error);

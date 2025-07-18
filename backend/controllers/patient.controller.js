@@ -520,6 +520,73 @@ const updatePatientProfile = asyncHandler(async (req, res) => {
     }
 
     try {
+        // Compare with existing values to identify what actually changed
+        const changedFields = {};
+        
+        console.log('Current patient data from database:', {
+            name: patient.name,
+            age: patient.age,
+            gender: patient.gender,
+            height: patient.height,
+            weight: patient.weight,
+            bloodGroup: patient.bloodGroup
+        });
+        
+        console.log('Incoming update data:', {
+            name: name,
+            age: age,
+            gender: gender,
+            height: height,
+            weight: weight,
+            bloodGroup: bloodGroup
+        });
+        
+        // Check blockchain-relevant fields for changes
+        if (name && name.trim() !== patient.name) {
+            changedFields.name = name.trim();
+        }
+        if (age && parseInt(age) !== patient.age) {
+            changedFields.age = parseInt(age);
+        }
+        if (gender) {
+            // Normalize both values for comparison
+            const normalizedIncomingGender = gender.toLowerCase() === 'male' ? 'Male' : 
+                                           gender.toLowerCase() === 'female' ? 'Female' : 
+                                           gender.toLowerCase() === 'neither' ? 'Other' : 'Other';
+            const normalizedCurrentGender = patient.gender ? 
+                                          (patient.gender.toLowerCase() === 'male' ? 'Male' : 
+                                           patient.gender.toLowerCase() === 'female' ? 'Female' : 'Other') : 'Other';
+            
+            console.log('Gender comparison:', {
+                incoming: gender,
+                normalizedIncoming: normalizedIncomingGender,
+                current: patient.gender,
+                normalizedCurrent: normalizedCurrentGender,
+                areEqual: normalizedIncomingGender === normalizedCurrentGender
+            });
+            
+            if (normalizedIncomingGender !== normalizedCurrentGender) {
+                changedFields.gender = normalizedIncomingGender;
+            }
+        }
+        if (height && parseInt(height) !== patient.height) {
+            changedFields.height = parseInt(height);
+        }
+        if (weight && parseInt(weight) !== patient.weight) {
+            console.log('Weight comparison:', {
+                incoming: weight,
+                incomingParsed: parseInt(weight),
+                current: patient.weight,
+                areEqual: parseInt(weight) === patient.weight
+            });
+            changedFields.weight = parseInt(weight);
+        }
+        if (bloodGroup && bloodGroup !== patient.bloodGroup) {
+            changedFields.bloodGroup = bloodGroup;
+        }
+
+        console.log('Fields that changed for blockchain update:', Object.keys(changedFields));
+
         // Update database first
         const updateData = {};
         if (name) updateData.name = name.trim();
@@ -544,32 +611,17 @@ const updatePatientProfile = asyncHandler(async (req, res) => {
         let blockchainResult = null;
         let blockchainError = null;
 
-        // Update blockchain if contract is deployed and blockchain-relevant fields are updated
-        const blockchainFields = { name, age, gender, height, weight, bloodGroup };
-        const hasBlockchainUpdates = Object.values(blockchainFields).some(value => value !== undefined);
+        // Update blockchain ONLY for fields that actually changed
+        const hasBlockchainChanges = Object.keys(changedFields).length > 0;
 
-        if (hasBlockchainUpdates && patient.contractAddress && patient.contractDeploymentStatus === 'deployed') {
+        if (hasBlockchainChanges && patient.contractAddress && patient.contractDeploymentStatus === 'deployed') {
             try {
-                console.log('Updating blockchain profile for patient:', patientId);
+                console.log('Updating only changed fields on blockchain:', Object.keys(changedFields));
                 
-                // Prepare blockchain update data
-                const blockchainUpdateData = {};
-                if (name) blockchainUpdateData.name = name.trim();
-                if (age) blockchainUpdateData.age = parseInt(age);
-                if (gender) {
-                    // Normalize gender for blockchain
-                    const normalizedGender = gender.toLowerCase() === 'male' ? 'Male' : 
-                                           gender.toLowerCase() === 'female' ? 'Female' : 'Other';
-                    blockchainUpdateData.gender = normalizedGender;
-                }
-                if (height) blockchainUpdateData.height = parseInt(height);
-                if (weight) blockchainUpdateData.weight = parseInt(weight);
-                if (bloodGroup) blockchainUpdateData.bloodGroup = bloodGroup;
-
-                // Update blockchain profile (this will be a new function we'll create)
+                // Update blockchain with only the changed fields
                 blockchainResult = await contractService.updatePatientProfile(
                     patient.contractAddress,
-                    blockchainUpdateData
+                    changedFields // Only pass the fields that actually changed
                 );
 
                 // Update blockchain sync status
@@ -586,7 +638,7 @@ const updatePatientProfile = asyncHandler(async (req, res) => {
                         blockNumber: blockchainResult.blockNumber,
                         gasUsed: blockchainResult.gasUsed,
                         status: 'confirmed',
-                        relatedData: blockchainUpdateData
+                        relatedData: changedFields
                     });
                 }
 
@@ -607,21 +659,23 @@ const updatePatientProfile = asyncHandler(async (req, res) => {
             patient: updatedPatient,
             databaseUpdated: true,
             blockchainUpdated: blockchainResult ? true : false,
+            blockchainFieldsUpdated: hasBlockchainChanges ? Object.keys(changedFields) : [],
             blockchainTransaction: blockchainResult ? {
                 transactionHash: blockchainResult.transactionHash,
                 blockNumber: blockchainResult.blockNumber,
-                gasUsed: blockchainResult.gasUsed
+                gasUsed: blockchainResult.gasUsed,
+                fieldsUpdated: blockchainResult.fieldsUpdated
             } : null,
             blockchainError: blockchainError
         };
 
         let message = "Profile updated successfully";
         if (blockchainResult) {
-            message += " (including blockchain)";
+            message += ` (including blockchain: ${Object.keys(changedFields).join(', ')})`;
         } else if (blockchainError) {
             message += " (database only - blockchain update failed)";
-        } else if (!hasBlockchainUpdates) {
-            message += " (database only)";
+        } else if (!hasBlockchainChanges) {
+            message += " (database only - no blockchain fields changed)";
         } else if (!patient.contractAddress) {
             message += " (database only - contract not deployed)";
         }
