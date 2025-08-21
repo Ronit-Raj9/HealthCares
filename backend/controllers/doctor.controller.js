@@ -7,26 +7,10 @@ import Notification from '../models/notification.model.js';
 import {ApiError} from '../utils/apiError.js';
 import {ApiResponse} from '../utils/apiResponse.js';
 import {asyncHandler} from '../utils/asyncHandler.js';
+import NotificationService from '../services/notificationService.js';
 
 
-const generateAccessAndRefreshToken = async (_id) => {
-    try{
-        
-        const doctor = await Doctor.findById(_id);
-        
-        const accessToken = await doctor.generateAccessToken();
-        const refreshToken =await doctor.generateRefreshToken();
-       
-        if(!accessToken || !refreshToken) {
-            throw new ApiError(500, "Failed to generate tokens");
-        }
-        await doctor.save({ validateBeforeSave: false }); 
-        return {accessToken, refreshToken};
-    }catch (error) {
-        throw new ApiError(500, "Error generating tokens: " + error.message);
-    }
-    
-};
+
 export const registerDoctor = asyncHandler(async (req, res) => {
     // const session = await mongoose.startSession();
     // session.startTransaction();
@@ -341,25 +325,29 @@ export const updateAppointmentStatus = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Patient not found");
     }
 
-    // Create notification
-    const notification = await Notification.create({
-        userId: patient._id,
-        message: `Your appointment has been ${normalizedStatus}`,
-        type: 'appointment',
-    });
+    // Determine notification type based on status
+    let notificationType;
+    switch (normalizedStatus) {
+        case 'confirmed':
+            notificationType = 'appointment_confirmation';
+            break;
+        case 'cancelled':
+            notificationType = 'appointment_cancellation';
+            break;
+        default:
+            notificationType = 'appointment';
+    }
 
-    // Update patient notifications
-    patient.notifications.push({
-        _id: notification._id,
-        message: notification.message
-    });
+    // Create appointment notification using the service
+    await NotificationService.createAppointmentNotification(
+        appointment.patientId,
+        doctorId,
+        appointment._id,
+        appointment.appointmentDate,
+        notificationType
+    );
 
-    // Save all changes
-    await Promise.all([
-        notification.save(),
-        patient.save(),
-        appointment.save()
-    ]);
+    await appointment.save();
 
     return res.status(200).json(
         new ApiResponse(200, appointment, "Appointment status updated successfully")
@@ -414,5 +402,90 @@ export const searchPatients = asyncHandler(async (req, res) => {
     } catch (error) {
         console.error('Error searching patients:', error);
         throw new ApiError(500, "Error searching patients: " + error.message);
+    }
+});
+
+// Doctor profile update function
+export const updateDoctorProfile = asyncHandler(async (req, res) => {
+    const doctorId = req.user._id;
+    const { 
+        name, 
+        email, 
+        phone, 
+        gender, 
+        address, 
+        specialization,
+        experience,
+        qualification,
+        fees,
+        hospitalName,
+        image,
+        password 
+    } = req.body;
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+        throw new ApiError(404, "Doctor not found");
+    }
+
+    // Validate fields
+    if (fees && (isNaN(fees) || fees < 0)) {
+        throw new ApiError(400, "Fees must be a positive number");
+    }
+    if (experience && (isNaN(experience) || experience < 0)) {
+        throw new ApiError(400, "Experience must be a positive number");
+    }
+
+    try {
+        // Prepare update data
+        const updateData = {};
+        if (name) updateData.name = name.trim();
+        if (email) updateData.email = email.trim();
+        if (phone) updateData.phone = phone;
+        if (gender) updateData.gender = gender;
+        if (address) updateData.address = address;
+        if (specialization) updateData.specialization = specialization;
+        if (experience) updateData.experience = experience;
+        if (qualification) updateData.qualification = qualification;
+        if (fees) updateData.fees = parseInt(fees);
+        if (hospitalName) updateData.hospitalName = hospitalName;
+        if (image) updateData.image = image;
+        if (password) updateData.password = password; // This will be hashed by the model pre-save hook
+
+        // Update database
+        const updatedDoctor = await Doctor.findByIdAndUpdate(
+            doctorId,
+            updateData,
+            { new: true, runValidators: true }
+        ).select('-password -refreshToken');
+
+        // Create notifications for profile updates
+        const updatedFields = Object.keys(updateData).filter(field => 
+            field !== 'password' && updateData[field] !== undefined
+        );
+        
+        if (updatedFields.length > 0) {
+            // Create notification for profile update
+            await NotificationService.createProfileUpdateNotification(
+                doctorId,
+                'doctor',
+                updatedFields.join(', ')
+            );
+        }
+        
+        // Create notification for password change if password was updated
+        if (password) {
+            await NotificationService.createPasswordChangeNotification(
+                doctorId,
+                'doctor'
+            );
+        }
+
+        return res.status(200).json(
+            new ApiResponse(200, updatedDoctor, "Doctor profile updated successfully")
+        );
+    } catch (error) {
+        console.error('Doctor profile update error:', error);
+        throw new ApiError(500, `Failed to update doctor profile: ${error.message}`);
     }
 });

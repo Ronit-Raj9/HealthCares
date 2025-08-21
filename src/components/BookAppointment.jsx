@@ -50,7 +50,7 @@ const BookingAppointment = ({ ele, onClose }) => {
       onClose();
     } catch (error) {
       console.log(error);
-      toast.error("Error booking appointment");
+      // toast.error("Error booking appointment");
     }
   };
 

@@ -3,6 +3,7 @@ import {
     registerDoctor,
     loginDoctor,
     getDoctorProfile,
+    updateDoctorProfile,
     addReportToPatient,
     getAppointments,
     updateAppointmentStatus,
@@ -19,6 +20,7 @@ doctorRouter.route('/view').get(getAllDoctors);
 doctorRouter.route('/login').post(loginDoctor);
 doctorRouter.route('/:doctorId/addReport').post(verifyDoctorJWT, addReportToPatient); 
 doctorRouter.route('/profile/:doctorId').get( getDoctorProfile);
+doctorRouter.route('/profile/update').put(verifyDoctorJWT, updateDoctorProfile);
 // doctorRouter.route('/:doctorId/appointments').get(verifyDoctorJWT, getAppointments);
 doctorRouter.route('/:doctorId/appointments').get( getAppointments);
 doctorRouter.route('/:doctorId/appointments/:appointmentId').put( updateAppointmentStatus);

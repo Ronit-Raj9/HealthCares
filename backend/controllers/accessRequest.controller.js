@@ -5,6 +5,7 @@ import AccessRequest from '../models/accessRequest.model.js';
 import Doctor from '../models/doctor.model.js';
 import Patient from '../models/patient.model.js';
 import MedicalRecord from '../models/medicalRecord.model.js';
+import NotificationService from '../services/notificationService.js';
 import crypto from 'crypto';
 import { generateKeyFromSignature } from '../utils/encryption.js';
 import contractService from '../services/contractService.js';
@@ -104,9 +105,6 @@ export const createAccessRequest = asyncHandler(async (req, res) => {
     // If patient has a deployed contract, create blockchain access request
     if (patient.contractAddress && patient.contractDeploymentStatus === 'deployed') {
         try {
-            // Create contract instance with doctor's address
-            const contract = await contractService.connectToPatientContract(patient.contractAddress);
-            
             // Note: The doctor needs to call requestAccess() on the blockchain
             // This should be done from the frontend, but we store the contract info for reference
             accessRequest.patientContractAddress = patient.contractAddress;
@@ -121,6 +119,14 @@ export const createAccessRequest = asyncHandler(async (req, res) => {
             console.warn('Could not create blockchain access request:', contractError.message);
         }
     }
+
+    // Create access request notifications
+    await NotificationService.createAccessRequestNotification(
+        patient._id,
+        doctor._id,
+        accessRequest._id,
+        'requested'
+    );
 
     // Populate doctor info for response
     await accessRequest.populate('doctorId', 'name email specialization');
@@ -348,6 +354,14 @@ export const respondToAccessRequest = asyncHandler(async (req, res) => {
     }
 
     await accessRequest.save();
+
+    // Create access request response notifications
+    await NotificationService.createAccessRequestNotification(
+        accessRequest.patientId,
+        accessRequest.doctorId._id,
+        accessRequest._id,
+        action === 'approve' ? 'granted' : 'denied'
+    );
 
     // Populate for response
     await accessRequest.populate([

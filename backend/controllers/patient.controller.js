@@ -7,6 +7,7 @@ import {ApiError} from '../utils/apiError.js';
 import {ApiResponse} from '../utils/apiResponse.js';
 import {asyncHandler} from '../utils/asyncHandler.js';
 import contractService from "../services/contractService.js";
+import NotificationService from '../services/notificationService.js';
 import { trackPatientTransaction } from '../utils/transactionTracker.js';
 
 const generateAccessAndRefreshTokens = async (_id) => {
@@ -320,15 +321,14 @@ try {
         
         patient.appointments.push(appointment._id);
 
-        const notification =await Notification.create({
-            userId: doctor._id,
-            message:`${patientMobile} have asked for appointment on ${appointmentDate}`,
-            type:'appointment'
-            
-        });
-        
-        doctor.notifications.push({_id:notification._id, message: notification.message});
-        await notification.save();
+        // Create appointment notification using the service
+        await NotificationService.createAppointmentNotification(
+            patientId,
+            doctorId,
+            appointment._id,
+            appointmentDate,
+            'appointment'
+        );
 
         await doctor.save();
         await patient.save();
@@ -367,13 +367,14 @@ const deleteAppointment = asyncHandler(async (req, res) => {
         await doctor.save();
         patient.appointments = patient.appointments.filter(app => app.toString() !== appointmentId);
         await patient.save();
-         const notification = await Notification.create({
-            userId: patient._id,
-            message: `Your appointment with ${patient.name} on ${appointment.appointmentDate} has been cancelled.`,
-            type: 'appointment'
-        });
-        doctor.notifications.push({ _id: notification._id, message: notification.message });
-        await notification.save();
+        // Create appointment cancellation notification
+        await NotificationService.createAppointmentNotification(
+            appointment.patientId,
+            appointment.doctorId,
+            appointment._id,
+            appointment.appointmentDate,
+            'appointment_cancellation'
+        );
         await doctor.save();
         await Appointment.findByIdAndDelete(appointmentId);
         console.log("Appointment deleted:", appointment);
@@ -668,6 +669,28 @@ const updatePatientProfile = asyncHandler(async (req, res) => {
             } : null,
             blockchainError: blockchainError
         };
+
+        // Create notifications for profile updates
+        const updatedFields = Object.keys(updateData).filter(field => 
+            field !== 'password' && updateData[field] !== undefined
+        );
+        
+        if (updatedFields.length > 0) {
+            // Create notification for profile update
+            await NotificationService.createProfileUpdateNotification(
+                patientId,
+                'patient',
+                updatedFields.join(', ')
+            );
+        }
+        
+        // Create notification for password change if password was updated
+        if (password) {
+            await NotificationService.createPasswordChangeNotification(
+                patientId,
+                'patient'
+            );
+        }
 
         let message = "Profile updated successfully";
         if (blockchainResult) {

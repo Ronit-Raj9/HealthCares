@@ -11,7 +11,7 @@ import "../styles/users.css";
 import "../styles/notif.css";
 import toast from "react-hot-toast";
 
-const NotificationPatient = () => {
+const NotificationDoctor = () => {
   const dispatch = useDispatch();
   const { loading } = useSelector((state) => state.root);
   let { userInfo } = useSelector((state) => state.root);
@@ -22,6 +22,7 @@ const NotificationPatient = () => {
   const fetchNotifications = async () => {
     try {
       dispatch(setLoading(true));
+      console.log("fetching noti")
       const response = await fetchData(
         `http://localhost:5000/api/notifications/${userInfo._id}`
       );
@@ -40,7 +41,6 @@ const NotificationPatient = () => {
     }
   };
 
-  
   // Fetch unread count
   const fetchUnreadCount = async () => {
     try {
@@ -300,4 +300,4 @@ const NotificationPatient = () => {
   );
 };
 
-export default NotificationPatient;
+export default NotificationDoctor;
