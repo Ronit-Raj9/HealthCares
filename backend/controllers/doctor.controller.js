@@ -276,7 +276,7 @@ export const getAppointments = asyncHandler(async (req, res) => {
     }
 
     const sortedAppointments = appointments.sort(
-      (a, b) => new Date(a.date) - new Date(b.date)
+      (a, b) => new Date(a.appointmentDate) - new Date(b.appointmentDate)
     );
 
     res

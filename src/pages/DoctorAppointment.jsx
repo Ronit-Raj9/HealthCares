@@ -128,8 +128,28 @@ const DoctorAppointment = () => {
                           <td>{i + 1}</td>
                           <td>{ele?.doctorId?.name || "N/A"}</td>
                           <td>{ele?.patientId?.name || "N/A"}</td>
-                          <td>{ele?.date}</td>
-                          <td>{ele?.time}</td>
+                          <td>
+                            {ele?.appointmentDate 
+                              ? new Date(ele.appointmentDate).toLocaleDateString("en-IN", {
+                                timeZone: "Asia/Kolkata",
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric'
+                              })
+                              : 'N/A'
+                            }
+                          </td>
+                          <td>
+                            {ele?.appointmentDate 
+                              ? new Date(ele.appointmentDate).toLocaleTimeString("en-IN", {
+                                timeZone: "Asia/Kolkata",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: true
+                              })
+                              : 'N/A'
+                            }
+                          </td>
                           <td>
                             {new Date(ele?.createdAt).toLocaleDateString("en-IN", {
                               timeZone: "Asia/Kolkata",

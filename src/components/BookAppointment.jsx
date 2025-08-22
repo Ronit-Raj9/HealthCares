@@ -23,6 +23,17 @@ const BookingAppointment = ({ ele, onClose }) => {
     e.preventDefault();
 
     const appointmentDate = new Date(`${formData.date}T${formData.time}`);
+    
+    // Validate that appointment date is not in the past
+    const now = new Date();
+    if (appointmentDate <= now) {
+      toast.error("Appointment date and time must be in the future.");
+      return;
+    }
+
+    // Log the appointment date for debugging
+    console.log("Appointment date being sent:", appointmentDate);
+    console.log("Formatted date:", appointmentDate.toISOString());
 
     // TODO: Replace with actual logged-in patient ID
     const patient = localStorage.getItem("patient"); // Set during login
@@ -67,6 +78,7 @@ const BookingAppointment = ({ ele, onClose }) => {
               className="form-input"
               value={formData.date}
               onChange={inputChange}
+              min={new Date().toISOString().split('T')[0]}
               required
             />
             <input

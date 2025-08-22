@@ -282,7 +282,10 @@ const askAppointment = asyncHandler(async (req, res) => {
         // if (!mongoose.Types.ObjectId.isValid(patientId) || !mongoose.Types.ObjectId.isValid(doctorId)) {
         //     throw new ApiError(400, "Invalid patient or doctor ID");
         // }
-        console.log("Creating appointment for patient ID:", patientId, "and doctor ID:", doctorId, "on date:", appointmentDate,patientMobile);
+        console.log("Creating appointment for patient ID:", patientId, "and doctor ID:", doctorId, "on date:", appointmentDate, "patientMobile:", patientMobile);
+        console.log("Appointment date type:", typeof appointmentDate);
+        console.log("Appointment date value:", appointmentDate);
+        console.log("Parsed appointment date:", new Date(appointmentDate));
         // Ensure doctorId refers to a Doctor, not a Patient
         // const appointment = await Appointment.create({
         //     patientId: patientId,
