@@ -30,7 +30,7 @@ const Navbar = () => {
     localStorage.removeItem("doctor");
     setTokenType(null);
     setUser(null);
-    navigate("/login");
+    navigate("/");
   };
 
   return (

@@ -1,3 +1,20 @@
+start 3 terminals, then 
+
+In terminal one run :  ipfs daemon
+
+In terminal two run: npm run dev
+
+In terminal three run : cd backend , npm run dev
+
+
+
+
+
+
+
+
+
+
 
 # 🚀 React + Vite Boilerplate
 
